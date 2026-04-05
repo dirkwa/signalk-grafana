@@ -1,0 +1,102 @@
+{
+  "title": "Environment",
+  "uid": "signalk-environment",
+  "editable": true,
+  "timezone": "browser",
+  "refresh": "5s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "title": "Wind Speed",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "velocityknot",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": true
+          }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "postgres" },
+          "rawSql": "SELECT ts AS time, avg(value) * 1.94384 AS \"AWS\" FROM signalk WHERE path = 'environment.wind.speedApparent' AND context = 'self' AND $__timeFilter(ts) SAMPLE BY $__interval",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "title": "Wind Angle",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "degree",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": true
+          }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "postgres" },
+          "rawSql": "SELECT ts AS time, avg(value) * 57.2958 AS \"AWA\" FROM signalk WHERE path = 'environment.wind.angleApparent' AND context = 'self' AND $__timeFilter(ts) SAMPLE BY $__interval",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "title": "Barometric Pressure",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "pressurehpa",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": true
+          }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "postgres" },
+          "rawSql": "SELECT ts AS time, avg(value) / 100 AS \"Baro\" FROM signalk WHERE path = 'environment.outside.pressure' AND context = 'self' AND $__timeFilter(ts) SAMPLE BY $__interval",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "title": "Water Temperature",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": true
+          }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "postgres" },
+          "rawSql": "SELECT ts AS time, avg(value) - 273.15 AS \"Water\" FROM signalk WHERE path = 'environment.water.temperature' AND context = 'self' AND $__timeFilter(ts) SAMPLE BY $__interval",
+          "format": "time_series"
+        }
+      ]
+    }
+  ]
+}
