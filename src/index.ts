@@ -14,6 +14,10 @@ interface App {
 interface ContainerManagerApi {
   getRuntime: () => { runtime: string; version: string } | null;
   ensureRunning: (name: string, config: unknown) => Promise<void>;
+  pullImage: (
+    image: string,
+    onProgress?: (msg: string) => void,
+  ) => Promise<void>;
   start: (name: string) => Promise<void>;
   stop: (name: string) => Promise<void>;
   remove: (name: string) => Promise<void>;
@@ -162,6 +166,186 @@ module.exports = (app: App) => {
           }
         } catch {
           res.status(503).json({ status: "not_running" });
+        }
+      });
+
+      router.get("/api/versions", async (_req, res) => {
+        try {
+          const ghRes = await fetch(
+            "https://api.github.com/repos/grafana/grafana/releases?per_page=10",
+            {
+              headers: { Accept: "application/vnd.github+json" },
+              signal: AbortSignal.timeout(10000),
+            },
+          );
+          if (!ghRes.ok) {
+            res.status(502).json({ error: "Failed to fetch releases" });
+            return;
+          }
+          const releases = (await ghRes.json()) as {
+            tag_name: string;
+            prerelease: boolean;
+            draft: boolean;
+          }[];
+          const versions = releases
+            .filter((r) => !r.draft)
+            .map((r) => ({
+              tag: r.tag_name.replace(/^v/, ""),
+              prerelease: r.prerelease,
+            }));
+          res.json(versions);
+        } catch (err) {
+          res.status(500).json({
+            error: err instanceof Error ? err.message : "Unknown error",
+          });
+        }
+      });
+
+      router.get("/api/update/check", async (_req, res) => {
+        try {
+          if (!currentConfig) {
+            res.status(503).json({ error: "Plugin not running" });
+            return;
+          }
+
+          const grafanaUrl = `http://127.0.0.1:${currentConfig.grafanaPort}`;
+          let currentVersion = "unknown";
+          try {
+            const healthRes = await fetch(`${grafanaUrl}/api/health`, {
+              signal: AbortSignal.timeout(3000),
+            });
+            if (healthRes.ok) {
+              const health = (await healthRes.json()) as {
+                version?: string;
+              };
+              currentVersion = health.version || "unknown";
+            }
+          } catch {
+            // not reachable
+          }
+
+          const ghRes = await fetch(
+            "https://api.github.com/repos/grafana/grafana/releases?per_page=5",
+            {
+              headers: { Accept: "application/vnd.github+json" },
+              signal: AbortSignal.timeout(10000),
+            },
+          );
+          let latestVersion = "unknown";
+          if (ghRes.ok) {
+            const releases = (await ghRes.json()) as {
+              tag_name: string;
+              prerelease: boolean;
+              draft: boolean;
+            }[];
+            const stable = releases.find((r) => !r.draft && !r.prerelease);
+            if (stable) latestVersion = stable.tag_name.replace(/^v/, "");
+          }
+
+          const semverGreater = (a: string, b: string): boolean => {
+            const pa = a.split(".").map(Number);
+            const pb = b.split(".").map(Number);
+            for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+              const va = pa[i] ?? 0;
+              const vb = pb[i] ?? 0;
+              if (vb > va) return true;
+              if (vb < va) return false;
+            }
+            return false;
+          };
+
+          const updateAvailable =
+            currentVersion !== "unknown" &&
+            latestVersion !== "unknown" &&
+            semverGreater(currentVersion, latestVersion);
+
+          res.json({ currentVersion, latestVersion, updateAvailable });
+        } catch (err) {
+          res.status(500).json({
+            error: err instanceof Error ? err.message : "Unknown error",
+          });
+        }
+      });
+
+      router.post("/api/update/apply", async (_req, res) => {
+        try {
+          const containers = (globalThis as any).__signalk_containerManager as
+            | ContainerManagerApi
+            | undefined;
+          if (!containers || !containers.getRuntime()) {
+            res.status(503).json({ error: "Container manager not available" });
+            return;
+          }
+
+          const ghRes = await fetch(
+            "https://api.github.com/repos/grafana/grafana/releases?per_page=5",
+            {
+              headers: { Accept: "application/vnd.github+json" },
+              signal: AbortSignal.timeout(10000),
+            },
+          );
+          if (!ghRes.ok) {
+            res.status(502).json({ error: "Failed to fetch releases" });
+            return;
+          }
+          const releases = (await ghRes.json()) as {
+            tag_name: string;
+            prerelease: boolean;
+            draft: boolean;
+          }[];
+          const stable = releases.find((r) => !r.draft && !r.prerelease);
+          if (!stable) {
+            res.status(404).json({ error: "No stable release found" });
+            return;
+          }
+          const newTag = stable.tag_name.replace(/^v/, "");
+
+          app.setPluginStatus(`Pulling Grafana ${newTag}...`);
+          await containers.pullImage(`grafana/grafana:${newTag}`);
+
+          app.setPluginStatus("Replacing container...");
+          await containers.remove("signalk-grafana");
+
+          app.setPluginStatus(`Starting Grafana ${newTag}...`);
+          await containers.ensureRunning("signalk-grafana", {
+            image: "grafana/grafana",
+            tag: newTag,
+            ports: {
+              "3000/tcp": `0.0.0.0:${currentConfig?.grafanaPort ?? 3001}`,
+            },
+            networkMode: currentConfig?.networkName ?? "sk-network",
+            volumes: {
+              "/etc/grafana/provisioning": `${app.getDataDirPath()}/provisioning`,
+              "/var/lib/grafana/dashboards": `${app.getDataDirPath()}/dashboards`,
+              "/var/lib/grafana": `${app.getDataDirPath()}/grafana-data`,
+            },
+            env: {
+              GF_SECURITY_ADMIN_PASSWORD:
+                currentConfig?.adminPassword ?? "admin",
+              GF_AUTH_ANONYMOUS_ENABLED: String(
+                currentConfig?.anonymousAccess ?? true,
+              ),
+              GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer",
+            },
+            restart: "unless-stopped",
+          });
+
+          if (currentConfig) {
+            currentConfig.grafanaVersion = newTag;
+          }
+
+          app.setPluginStatus(
+            `Grafana ${newTag} running at port ${currentConfig?.grafanaPort ?? 3001}`,
+          );
+          res.json({
+            status: "updated",
+            newVersion: newTag,
+            message: `Updated to Grafana ${newTag}. Container running.`,
+          });
+        } catch (err) {
+          res.status(500).json({
+            error: err instanceof Error ? err.message : "Unknown error",
+          });
         }
       });
     },

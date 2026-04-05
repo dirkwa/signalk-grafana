@@ -126,6 +126,59 @@ export default function PluginConfigurationPanel({ configuration, save }) {
   const [statusLoading, setStatusLoading] = useState(true);
   const [actionStatus, setActionStatus] = useState("");
   const [statusError, setStatusError] = useState(false);
+  const [versions, setVersions] = useState([]);
+  const [versionsLoading, setVersionsLoading] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [updating, setUpdating] = useState(false);
+
+  const fetchVersions = useCallback(async () => {
+    setVersionsLoading(true);
+    try {
+      const res = await fetch("/plugins/signalk-grafana/api/versions");
+      if (res.ok) setVersions(await res.json());
+    } catch {
+      // offline
+    }
+    setVersionsLoading(false);
+  }, []);
+
+  const checkForUpdate = async () => {
+    setCheckingUpdate(true);
+    try {
+      const res = await fetch("/plugins/signalk-grafana/api/update/check");
+      if (res.ok) setUpdateInfo(await res.json());
+    } catch {
+      // fail silently
+    }
+    setCheckingUpdate(false);
+  };
+
+  const applyUpdate = async () => {
+    setUpdating(true);
+    setActionStatus("Pulling new image and restarting...");
+    setStatusError(false);
+    try {
+      const res = await fetch("/plugins/signalk-grafana/api/update/apply", {
+        method: "POST",
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setActionStatus(data.message);
+        setUpdateInfo(null);
+        if (data.newVersion) setGrafanaVersion(data.newVersion);
+        fetchStatus();
+      } else {
+        const data = await res.json().catch(() => ({ error: res.statusText }));
+        setActionStatus(`Update failed: ${data.error}`);
+        setStatusError(true);
+      }
+    } catch (e) {
+      setActionStatus(`Update failed: ${e.message}`);
+      setStatusError(true);
+    }
+    setUpdating(false);
+  };
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -143,9 +196,10 @@ export default function PluginConfigurationPanel({ configuration, save }) {
 
   useEffect(() => {
     fetchStatus();
+    fetchVersions();
     const interval = setInterval(fetchStatus, 5000);
     return () => clearInterval(interval);
-  }, [fetchStatus]);
+  }, [fetchStatus, fetchVersions]);
 
   const doSave = () => {
     save({
@@ -210,6 +264,61 @@ export default function PluginConfigurationPanel({ configuration, save }) {
         </div>
       )}
 
+      {isRunning && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            marginBottom: 12,
+          }}
+        >
+          {updateInfo && updateInfo.updateAvailable ? (
+            <>
+              <span style={{ fontSize: 13 }}>
+                v{updateInfo.currentVersion} &rarr;{" "}
+                <strong>v{updateInfo.latestVersion}</strong> available
+              </span>
+              <button
+                style={{
+                  ...S.btn,
+                  ...S.btnPrimary,
+                  padding: "4px 12px",
+                  fontSize: 12,
+                  ...(updating ? { opacity: 0.5, cursor: "not-allowed" } : {}),
+                }}
+                onClick={applyUpdate}
+                disabled={updating}
+              >
+                {updating ? "Updating..." : "Update Grafana"}
+              </button>
+            </>
+          ) : updateInfo && !updateInfo.updateAvailable ? (
+            <span style={{ fontSize: 12, color: "#888" }}>
+              v{updateInfo.currentVersion} (up to date)
+            </span>
+          ) : (
+            <button
+              style={{
+                ...S.btn,
+                padding: "4px 12px",
+                fontSize: 12,
+                background: "#f1f5f9",
+                color: "#475569",
+                border: "1px solid #e2e8f0",
+                ...(checkingUpdate
+                  ? { opacity: 0.5, cursor: "not-allowed" }
+                  : {}),
+              }}
+              onClick={checkForUpdate}
+              disabled={checkingUpdate}
+            >
+              {checkingUpdate ? "Checking..." : "Check for updates"}
+            </button>
+          )}
+        </div>
+      )}
+
       <div style={S.sectionTitle}>Settings</div>
 
       <div style={S.fieldRow}>
@@ -225,11 +334,46 @@ export default function PluginConfigurationPanel({ configuration, save }) {
 
       <div style={S.fieldRow}>
         <span style={S.label}>Image version</span>
-        <input
-          style={S.input}
+        <select
+          style={{
+            ...S.input,
+            width: "auto",
+            minWidth: 200,
+          }}
           value={grafanaVersion}
           onChange={(e) => setGrafanaVersion(e.target.value)}
-        />
+        >
+          <option value="latest">latest (recommended)</option>
+          {versions
+            .filter((v) => v.prerelease)
+            .slice(0, 2)
+            .map((v) => (
+              <option key={v.tag} value={v.tag}>
+                {v.tag} (pre-release)
+              </option>
+            ))}
+          {versions
+            .filter((v) => !v.prerelease)
+            .slice(0, 3)
+            .map((v, i) => (
+              <option key={v.tag} value={v.tag}>
+                {v.tag}
+                {i === 0 ? " (current stable)" : ""}
+              </option>
+            ))}
+        </select>
+        {versionsLoading && <span style={S.hint}>loading releases...</span>}
+        <button
+          style={{
+            ...S.btn,
+            ...S.btnPrimary,
+            padding: "4px 10px",
+            fontSize: 11,
+          }}
+          onClick={fetchVersions}
+        >
+          ↻
+        </button>
       </div>
 
       <div style={S.fieldRow}>
