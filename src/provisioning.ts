@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "fs";
+import { mkdirSync, unlinkSync, writeFileSync } from "fs";
 import { join } from "path";
 import { Config } from "./config/schema";
 
@@ -32,21 +32,10 @@ datasources:
 
   writeFileSync(join(dsDir, "questdb.yaml"), datasourceYaml);
 
-  const skHost =
-    config.signalkUrl?.replace(/^https?:\/\//, "") ||
-    `host.containers.internal:${process.env.PORT || 3000}`;
-  const signalkDsYaml = `apiVersion: 1
-datasources:
-  - name: Signal K
-    type: tkurki-signalk-datasource
-    access: proxy
-    url: http://${skHost}
-    isDefault: false
-    editable: true
-    jsonData:
-      context: self
-      hostname: ${skHost}
-      ssl: false
-`;
-  writeFileSync(join(dsDir, "signalk.yaml"), signalkDsYaml);
+  // Remove stale SK datasource provisioning file (crashes Grafana if plugin not installed)
+  try {
+    unlinkSync(join(dsDir, "signalk.yaml"));
+  } catch {
+    // doesn't exist
+  }
 }

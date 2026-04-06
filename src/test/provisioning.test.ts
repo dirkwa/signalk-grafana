@@ -39,17 +39,15 @@ describe("generateProvisioning", () => {
     assert.ok(content.includes("sslmode: disable"));
   });
 
-  it("creates Signal K datasource YAML", () => {
+  it("does not create Signal K datasource file", () => {
     tempDir = mkdtempSync(join(tmpdir(), "grafana-test-"));
     generateProvisioning(tempDir, defaultConfig);
 
     const dsFile = join(tempDir, "provisioning/datasources/signalk.yaml");
-    assert.ok(existsSync(dsFile), "signalk datasource file should exist");
-
-    const content = readFileSync(dsFile, "utf8");
-    assert.ok(content.includes("tkurki-signalk-datasource"));
-    assert.ok(content.includes("host.containers.internal"));
-    assert.ok(content.includes("context: self"));
+    assert.ok(
+      !existsSync(dsFile),
+      "signalk datasource should not be provisioned via file",
+    );
   });
 
   it("uses custom QuestDB container name and port", () => {
@@ -65,20 +63,5 @@ describe("generateProvisioning", () => {
       "utf8",
     );
     assert.ok(content.includes("sk-my-questdb:9999"));
-  });
-
-  it("strips protocol from signalkUrl override", () => {
-    tempDir = mkdtempSync(join(tmpdir(), "grafana-test-"));
-    generateProvisioning(tempDir, {
-      ...defaultConfig,
-      signalkUrl: "http://192.168.0.122:3000",
-    });
-
-    const content = readFileSync(
-      join(tempDir, "provisioning/datasources/signalk.yaml"),
-      "utf8",
-    );
-    assert.ok(content.includes("192.168.0.122:3000"));
-    assert.ok(!content.includes("http://http://"));
   });
 });

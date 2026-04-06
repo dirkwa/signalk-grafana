@@ -140,6 +140,44 @@ module.exports = (app: App) => {
       app.debug("could not set admin password");
     }
 
+    // Provision Signal K datasource via API (not file — plugin may not be ready on first boot)
+    try {
+      const skHost =
+        config.signalkUrl?.replace(/^https?:\/\//, "") ||
+        `host.containers.internal:${process.env.PORT || 3000}`;
+      const dsCheck = await fetch(
+        `${grafanaUrl}/api/datasources/name/Signal%20K`,
+        {
+          headers: {
+            Authorization: `Basic ${Buffer.from(`admin:${config.adminPassword ?? "admin"}`).toString("base64")}`,
+          },
+          signal: AbortSignal.timeout(3000),
+        },
+      );
+      if (dsCheck.status === 404) {
+        await fetch(`${grafanaUrl}/api/datasources`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Basic ${Buffer.from(`admin:${config.adminPassword ?? "admin"}`).toString("base64")}`,
+          },
+          body: JSON.stringify({
+            name: "Signal K",
+            type: "tkurki-signalk-datasource",
+            access: "proxy",
+            url: `http://${skHost}`,
+            jsonData: { context: "self", hostname: skHost, ssl: false },
+          }),
+          signal: AbortSignal.timeout(5000),
+        });
+        app.debug("provisioned Signal K datasource via API");
+      }
+    } catch {
+      app.debug(
+        "could not provision Signal K datasource (plugin may not be installed)",
+      );
+    }
+
     app.setPluginStatus(`Grafana running at port ${config.grafanaPort}`);
   }
 
