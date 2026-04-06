@@ -1,6 +1,8 @@
 {
-  "title": "Navigation",
+  "id": null,
   "uid": "signalk-navigation",
+  "title": "Navigation",
+  "schemaVersion": 39,
   "editable": true,
   "timezone": "browser",
   "refresh": "5s",
@@ -24,8 +26,9 @@
       "targets": [
         {
           "datasource": { "type": "postgres" },
-          "rawSql": "SELECT ts AS time, avg(value) * 1.94384 AS \"SOG\" FROM signalk WHERE path = 'navigation.speedOverGround' AND context = 'self' AND $__timeFilter(ts) SAMPLE BY $__interval",
-          "format": "time_series"
+          "rawSql": "SELECT ts AS \"time\", avg(value) * 1.94384 AS \"SOG\" FROM signalk WHERE path = 'navigation.speedOverGround' AND context = 'self' AND ts >= $__timeFrom() AND ts <= $__timeTo() SAMPLE BY 10s",
+          "format": "time_series",
+          "refId": "A"
         }
       ]
     },
@@ -49,8 +52,9 @@
       "targets": [
         {
           "datasource": { "type": "postgres" },
-          "rawSql": "SELECT ts AS time, avg(value) * 57.2958 AS \"COG\" FROM signalk WHERE path = 'navigation.courseOverGroundTrue' AND context = 'self' AND $__timeFilter(ts) SAMPLE BY $__interval",
-          "format": "time_series"
+          "rawSql": "SELECT ts AS \"time\", avg(value) * 57.2958 AS \"COG\" FROM signalk WHERE path = 'navigation.courseOverGroundTrue' AND context = 'self' AND ts >= $__timeFrom() AND ts <= $__timeTo() SAMPLE BY 10s",
+          "format": "time_series",
+          "refId": "A"
         }
       ]
     },
@@ -72,8 +76,9 @@
       "targets": [
         {
           "datasource": { "type": "postgres" },
-          "rawSql": "SELECT ts AS time, avg(value) AS \"Depth\" FROM signalk WHERE path = 'environment.depth.belowTransducer' AND context = 'self' AND $__timeFilter(ts) SAMPLE BY $__interval",
-          "format": "time_series"
+          "rawSql": "SELECT ts AS \"time\", avg(value) AS \"Depth\" FROM signalk WHERE path = 'environment.depth.belowTransducer' AND context = 'self' AND ts >= $__timeFrom() AND ts <= $__timeTo() SAMPLE BY 10s",
+          "format": "time_series",
+          "refId": "A"
         }
       ]
     },
@@ -97,8 +102,9 @@
       "targets": [
         {
           "datasource": { "type": "postgres" },
-          "rawSql": "SELECT ts AS time, avg(value) * 57.2958 AS \"Heading\" FROM signalk WHERE path = 'navigation.headingTrue' AND context = 'self' AND $__timeFilter(ts) SAMPLE BY $__interval",
-          "format": "time_series"
+          "rawSql": "SELECT ts AS \"time\", avg(value) * 57.2958 AS \"Heading\" FROM signalk WHERE path = 'navigation.headingTrue' AND context = 'self' AND ts >= $__timeFrom() AND ts <= $__timeTo() SAMPLE BY 10s",
+          "format": "time_series",
+          "refId": "A"
         }
       ]
     }

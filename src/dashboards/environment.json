@@ -1,6 +1,8 @@
 {
-  "title": "Environment",
+  "id": null,
   "uid": "signalk-environment",
+  "title": "Environment",
+  "schemaVersion": 39,
   "editable": true,
   "timezone": "browser",
   "refresh": "5s",
@@ -24,8 +26,9 @@
       "targets": [
         {
           "datasource": { "type": "postgres" },
-          "rawSql": "SELECT ts AS time, avg(value) * 1.94384 AS \"AWS\" FROM signalk WHERE path = 'environment.wind.speedApparent' AND context = 'self' AND $__timeFilter(ts) SAMPLE BY $__interval",
-          "format": "time_series"
+          "rawSql": "SELECT ts AS \"time\", avg(value) * 1.94384 AS \"AWS\" FROM signalk WHERE path = 'environment.wind.speedApparent' AND context = 'self' AND ts >= $__timeFrom() AND ts <= $__timeTo() SAMPLE BY 10s",
+          "format": "time_series",
+          "refId": "A"
         }
       ]
     },
@@ -47,8 +50,9 @@
       "targets": [
         {
           "datasource": { "type": "postgres" },
-          "rawSql": "SELECT ts AS time, avg(value) * 57.2958 AS \"AWA\" FROM signalk WHERE path = 'environment.wind.angleApparent' AND context = 'self' AND $__timeFilter(ts) SAMPLE BY $__interval",
-          "format": "time_series"
+          "rawSql": "SELECT ts AS \"time\", avg(value) * 57.2958 AS \"AWA\" FROM signalk WHERE path = 'environment.wind.angleApparent' AND context = 'self' AND ts >= $__timeFrom() AND ts <= $__timeTo() SAMPLE BY 10s",
+          "format": "time_series",
+          "refId": "A"
         }
       ]
     },
@@ -70,8 +74,9 @@
       "targets": [
         {
           "datasource": { "type": "postgres" },
-          "rawSql": "SELECT ts AS time, avg(value) / 100 AS \"Baro\" FROM signalk WHERE path = 'environment.outside.pressure' AND context = 'self' AND $__timeFilter(ts) SAMPLE BY $__interval",
-          "format": "time_series"
+          "rawSql": "SELECT ts AS \"time\", avg(value) / 100 AS \"Baro\" FROM signalk WHERE path = 'environment.outside.pressure' AND context = 'self' AND ts >= $__timeFrom() AND ts <= $__timeTo() SAMPLE BY 10s",
+          "format": "time_series",
+          "refId": "A"
         }
       ]
     },
@@ -93,8 +98,9 @@
       "targets": [
         {
           "datasource": { "type": "postgres" },
-          "rawSql": "SELECT ts AS time, avg(value) - 273.15 AS \"Water\" FROM signalk WHERE path = 'environment.water.temperature' AND context = 'self' AND $__timeFilter(ts) SAMPLE BY $__interval",
-          "format": "time_series"
+          "rawSql": "SELECT ts AS \"time\", avg(value) - 273.15 AS \"Water\" FROM signalk WHERE path = 'environment.water.temperature' AND context = 'self' AND ts >= $__timeFrom() AND ts <= $__timeTo() SAMPLE BY 10s",
+          "format": "time_series",
+          "refId": "A"
         }
       ]
     }

@@ -1,6 +1,8 @@
 {
-  "title": "Engine",
+  "id": null,
   "uid": "signalk-engine",
+  "title": "Engine",
+  "schemaVersion": 39,
   "editable": true,
   "timezone": "browser",
   "refresh": "5s",
@@ -24,8 +26,9 @@
       "targets": [
         {
           "datasource": { "type": "postgres" },
-          "rawSql": "SELECT ts AS time, avg(value) * 60 AS \"RPM\" FROM signalk WHERE path LIKE 'propulsion.%.revolutions' AND context = 'self' AND $__timeFilter(ts) SAMPLE BY $__interval",
-          "format": "time_series"
+          "rawSql": "SELECT ts AS \"time\", avg(value) * 60 AS \"RPM\" FROM signalk WHERE path LIKE 'propulsion.%.revolutions' AND context = 'self' AND ts >= $__timeFrom() AND ts <= $__timeTo() SAMPLE BY 10s",
+          "format": "time_series",
+          "refId": "A"
         }
       ]
     },
@@ -47,8 +50,9 @@
       "targets": [
         {
           "datasource": { "type": "postgres" },
-          "rawSql": "SELECT ts AS time, avg(value) - 273.15 AS \"Coolant\" FROM signalk WHERE path LIKE 'propulsion.%.coolantTemperature' AND context = 'self' AND $__timeFilter(ts) SAMPLE BY $__interval",
-          "format": "time_series"
+          "rawSql": "SELECT ts AS \"time\", avg(value) - 273.15 AS \"Coolant\" FROM signalk WHERE path LIKE 'propulsion.%.coolantTemperature' AND context = 'self' AND ts >= $__timeFrom() AND ts <= $__timeTo() SAMPLE BY 10s",
+          "format": "time_series",
+          "refId": "A"
         }
       ]
     },
@@ -70,8 +74,9 @@
       "targets": [
         {
           "datasource": { "type": "postgres" },
-          "rawSql": "SELECT ts AS time, avg(value) * 0.000145038 AS \"Oil PSI\" FROM signalk WHERE path LIKE 'propulsion.%.oilPressure' AND context = 'self' AND $__timeFilter(ts) SAMPLE BY $__interval",
-          "format": "time_series"
+          "rawSql": "SELECT ts AS \"time\", avg(value) * 0.000145038 AS \"Oil PSI\" FROM signalk WHERE path LIKE 'propulsion.%.oilPressure' AND context = 'self' AND ts >= $__timeFrom() AND ts <= $__timeTo() SAMPLE BY 10s",
+          "format": "time_series",
+          "refId": "A"
         }
       ]
     },
@@ -95,8 +100,9 @@
       "targets": [
         {
           "datasource": { "type": "postgres" },
-          "rawSql": "SELECT ts AS time, avg(value) AS \"Fuel\" FROM signalk WHERE path LIKE 'tanks.fuel.%.currentLevel' AND context = 'self' AND $__timeFilter(ts) SAMPLE BY $__interval",
-          "format": "time_series"
+          "rawSql": "SELECT ts AS \"time\", avg(value) AS \"Fuel\" FROM signalk WHERE path LIKE 'tanks.fuel.%.currentLevel' AND context = 'self' AND ts >= $__timeFrom() AND ts <= $__timeTo() SAMPLE BY 10s",
+          "format": "time_series",
+          "refId": "A"
         }
       ]
     }
