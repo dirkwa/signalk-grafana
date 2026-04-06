@@ -37,9 +37,9 @@ export const ConfigSchema = Type.Object({
   }),
   signalkUrl: Type.String({
     default: "",
-    title: "Signal K server URL",
+    title: "Signal K server URL override",
     description:
-      "URL for the Signal K datasource in Grafana (e.g. http://192.168.0.122:3000). Leave empty to skip.",
+      "Auto-detected from PORT env var. Only set to override (e.g. http://192.168.0.122:3000).",
   }),
   bindToAllInterfaces: Type.Boolean({
     default: false,

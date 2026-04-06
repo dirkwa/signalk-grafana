@@ -439,16 +439,14 @@ export default function PluginConfigurationPanel({ configuration, save }) {
       <div style={S.sectionTitle}>Data Sources</div>
 
       <div style={S.fieldRow}>
-        <span style={S.label}>Signal K server URL</span>
+        <span style={S.label}>Signal K URL override</span>
         <input
           style={S.input}
-          placeholder="http://192.168.0.122:3000"
+          placeholder={`auto: host.containers.internal:${window.location.port || 3000}`}
           value={signalkUrl}
           onChange={(e) => setSignalkUrl(e.target.value)}
         />
-        <span style={S.hint}>
-          for live Signal K datasource (leave empty to skip)
-        </span>
+        <span style={S.hint}>auto-detected, only set to override</span>
       </div>
 
       <div style={S.fieldRow}>

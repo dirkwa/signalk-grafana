@@ -35,18 +35,19 @@ datasources:
 
   writeFileSync(join(dsDir, "questdb.yaml"), datasourceYaml);
 
-  if (config.signalkUrl) {
-    const signalkDsYaml = `apiVersion: 1
+  const skPort =
+    config.signalkUrl ||
+    `http://host.containers.internal:${process.env.PORT || 3000}`;
+  const signalkDsYaml = `apiVersion: 1
 datasources:
   - name: Signal K
     type: tkurki-signalk-datasource
-    url: ${config.signalkUrl}
+    url: ${skPort}
     access: proxy
     isDefault: false
     editable: true
 `;
-    writeFileSync(join(dsDir, "signalk.yaml"), signalkDsYaml);
-  }
+  writeFileSync(join(dsDir, "signalk.yaml"), signalkDsYaml);
 
   const dashboardProviderYaml = `apiVersion: 1
 providers:
