@@ -403,7 +403,11 @@ export default function PluginConfigurationPanel({ configuration, save }) {
             try {
               const res = await fetch(
                 "/plugins/signalk-grafana/api/set-password",
-                { method: "POST" },
+                {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ password: adminPassword }),
+                },
               );
               if (res.ok) {
                 const data = await res.json();

@@ -389,7 +389,6 @@ module.exports = (app: App) => {
             networkMode: currentConfig?.networkName ?? "sk-network",
             volumes: {
               "/etc/grafana/provisioning": `${app.getDataDirPath()}/provisioning`,
-              "/var/lib/grafana/dashboards": `${app.getDataDirPath()}/dashboards`,
               "/var/lib/grafana": `${app.getDataDirPath()}/grafana-data`,
             },
             env: {
@@ -435,7 +434,8 @@ module.exports = (app: App) => {
             return;
           }
 
-          const password = currentConfig?.adminPassword ?? "admin";
+          const password =
+            req.body?.password || currentConfig?.adminPassword || "admin";
           const result = await containers.execInContainer("signalk-grafana", [
             "grafana",
             "cli",

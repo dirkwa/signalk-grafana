@@ -1,6 +1,6 @@
 {
   "name": "signalk-grafana",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Managed Grafana with auto-provisioned QuestDB dashboards for Signal K",
   "keywords": [
     "signalk-node-server-plugin",
