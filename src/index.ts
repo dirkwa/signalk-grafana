@@ -128,6 +128,19 @@ module.exports = (app: App) => {
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
 
+    // Always set the admin password after startup to ensure it matches config
+    try {
+      await containers.execInContainer("signalk-grafana", [
+        "grafana",
+        "cli",
+        "admin",
+        "reset-admin-password",
+        config.adminPassword ?? "admin",
+      ]);
+    } catch {
+      app.debug("could not set admin password");
+    }
+
     app.setPluginStatus(`Grafana running at port ${config.grafanaPort}`);
   }
 
