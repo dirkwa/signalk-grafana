@@ -19,6 +19,7 @@ export function generateProvisioning(dataDir: string, config: Config): void {
   const datasourceYaml = `apiVersion: 1
 datasources:
   - name: QuestDB
+    uid: signalk-questdb
     type: postgres
     url: ${questdbHost}:${config.questdbPgPort}
     user: admin

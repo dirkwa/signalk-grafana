@@ -25,7 +25,10 @@
       },
       "targets": [
         {
-          "datasource": { "type": "postgres" },
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "signalk-questdb"
+          },
           "rawSql": "SELECT ts AS \"time\", avg(value) AS \"Voltage\" FROM signalk WHERE path LIKE 'electrical.batteries.%.voltage' AND context = 'self' AND ts >= $__timeFrom() AND ts <= $__timeTo() SAMPLE BY 10s",
           "format": "time_series",
           "refId": "A"
@@ -49,7 +52,10 @@
       },
       "targets": [
         {
-          "datasource": { "type": "postgres" },
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "signalk-questdb"
+          },
           "rawSql": "SELECT ts AS \"time\", avg(value) AS \"Current\" FROM signalk WHERE path LIKE 'electrical.batteries.%.current' AND context = 'self' AND ts >= $__timeFrom() AND ts <= $__timeTo() SAMPLE BY 10s",
           "format": "time_series",
           "refId": "A"
@@ -73,7 +79,10 @@
       },
       "targets": [
         {
-          "datasource": { "type": "postgres" },
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "signalk-questdb"
+          },
           "rawSql": "SELECT ts AS \"time\", avg(value) AS \"Power\" FROM signalk WHERE path LIKE 'electrical.ac.%.total.realPower' AND context = 'self' AND ts >= $__timeFrom() AND ts <= $__timeTo() SAMPLE BY 10s",
           "format": "time_series",
           "refId": "A"
@@ -97,7 +106,10 @@
       },
       "targets": [
         {
-          "datasource": { "type": "postgres" },
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "signalk-questdb"
+          },
           "rawSql": "SELECT ts AS \"time\", avg(value) AS \"Voltage\" FROM signalk WHERE path LIKE 'electrical.ac.%.average.lineNeutralVoltage' AND context = 'self' AND ts >= $__timeFrom() AND ts <= $__timeTo() SAMPLE BY 10s",
           "format": "time_series",
           "refId": "A"
