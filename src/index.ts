@@ -59,21 +59,8 @@ module.exports = (app: App) => {
       return;
     }
 
-    app.setPluginStatus("Creating container network...");
+    app.setPluginStatus("Ensuring container network...");
     await containers.ensureNetwork(config.networkName);
-
-    const questdbState = await containers.getState(config.questdbContainerName);
-    if (questdbState === "running" || questdbState === "stopped") {
-      app.debug("connecting QuestDB to network %s", config.networkName);
-      try {
-        await containers.connectToNetwork(
-          config.questdbContainerName,
-          config.networkName,
-        );
-      } catch {
-        app.debug("QuestDB may already be on the network");
-      }
-    }
 
     app.setPluginStatus("Generating Grafana provisioning...");
     generateProvisioning(dataDir, config);
