@@ -65,6 +65,22 @@ module.exports = (app: App) => {
     app.setPluginStatus("Generating Grafana provisioning...");
     generateProvisioning(dataDir, config);
 
+    // Fix permissions on grafana-data from previous runs with different UID mappings.
+    // podman unshare enters the user namespace where the mapped UIDs are accessible.
+    const runtime = containers.getRuntime();
+    if (runtime && runtime.runtime === "podman") {
+      try {
+        const { execFileSync } = await import("child_process");
+        execFileSync(
+          "podman",
+          ["unshare", "chmod", "-R", "a+rwX", `${dataDir}/grafana-data`],
+          { timeout: 15000 },
+        );
+      } catch {
+        app.debug("could not fix grafana-data permissions via podman unshare");
+      }
+    }
+
     const bind = config.bindToAllInterfaces ? "0.0.0.0" : "127.0.0.1";
     const containerConfig = {
       image: "grafana/grafana",
