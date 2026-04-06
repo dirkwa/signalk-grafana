@@ -1,6 +1,6 @@
 {
   "name": "signalk-grafana",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Managed Grafana with auto-provisioned QuestDB dashboards for Signal K",
   "keywords": [
     "signalk-node-server-plugin",
@@ -12,7 +12,7 @@
   },
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc && cp -r src/dashboards dist/ && webpack",
+    "build": "tsc && webpack",
     "build:config": "webpack",
     "watch": "tsc --watch",
     "prettier": "prettier --write .",

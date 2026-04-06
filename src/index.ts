@@ -75,7 +75,6 @@ module.exports = (app: App) => {
       networkMode: config.networkName,
       volumes: {
         "/etc/grafana/provisioning": `${dataDir}/provisioning`,
-        "/var/lib/grafana/dashboards": `${dataDir}/dashboards`,
         "/var/lib/grafana": `${dataDir}/grafana-data`,
       },
       env: {
