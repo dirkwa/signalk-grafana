@@ -388,7 +388,39 @@ export default function PluginConfigurationPanel({ configuration, save }) {
           value={adminPassword}
           onChange={(e) => setAdminPassword(e.target.value)}
         />
-        <span style={S.hint}>set on first run only</span>
+        <button
+          style={{
+            ...S.btn,
+            ...S.btnPrimary,
+            padding: "4px 12px",
+            fontSize: 12,
+          }}
+          onClick={async () => {
+            setActionStatus("Setting password...");
+            setStatusError(false);
+            try {
+              const res = await fetch(
+                "/plugins/signalk-grafana/api/set-password",
+                { method: "POST" },
+              );
+              if (res.ok) {
+                const data = await res.json();
+                setActionStatus(data.message);
+              } else {
+                const data = await res
+                  .json()
+                  .catch(() => ({ error: res.statusText }));
+                setActionStatus(`Failed: ${data.error}`);
+                setStatusError(true);
+              }
+            } catch (e) {
+              setActionStatus(`Failed: ${e.message}`);
+              setStatusError(true);
+            }
+          }}
+        >
+          Set
+        </button>
       </div>
 
       <div style={S.fieldRow}>

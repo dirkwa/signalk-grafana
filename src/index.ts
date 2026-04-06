@@ -22,6 +22,10 @@ interface ContainerManagerApi {
   stop: (name: string) => Promise<void>;
   remove: (name: string) => Promise<void>;
   getState: (name: string) => Promise<string>;
+  execInContainer: (
+    name: string,
+    command: string[],
+  ) => Promise<{ exitCode: number; stdout: string; stderr: string }>;
   ensureNetwork: (name: string) => Promise<void>;
   connectToNetwork: (
     containerName: string,
@@ -342,6 +346,42 @@ module.exports = (app: App) => {
             newVersion: newTag,
             message: `Updated to Grafana ${newTag}. Container running.`,
           });
+        } catch (err) {
+          res.status(500).json({
+            error: err instanceof Error ? err.message : "Unknown error",
+          });
+        }
+      });
+
+      router.post("/api/set-password", async (req, res) => {
+        try {
+          const containers = (globalThis as any).__signalk_containerManager as
+            | ContainerManagerApi
+            | undefined;
+          if (!containers || !containers.getRuntime()) {
+            res.status(503).json({ error: "Container manager not available" });
+            return;
+          }
+
+          const password = currentConfig?.adminPassword ?? "admin";
+          const result = await containers.execInContainer("signalk-grafana", [
+            "grafana",
+            "cli",
+            "admin",
+            "reset-admin-password",
+            password,
+          ]);
+
+          if (result.exitCode === 0) {
+            res.json({
+              status: "ok",
+              message: "Admin password updated.",
+            });
+          } else {
+            res.status(500).json({
+              error: result.stderr || "Failed to set password",
+            });
+          }
         } catch (err) {
           res.status(500).json({
             error: err instanceof Error ? err.message : "Unknown error",
