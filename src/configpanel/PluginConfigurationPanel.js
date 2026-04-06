@@ -442,7 +442,7 @@ export default function PluginConfigurationPanel({ configuration, save }) {
         <span style={S.label}>Signal K URL override</span>
         <input
           style={S.input}
-          placeholder={`auto: host.containers.internal:${window.location.port || 3000}`}
+          placeholder={`auto: host.containers.internal:${window.location.port || "3000"}`}
           value={signalkUrl}
           onChange={(e) => setSignalkUrl(e.target.value)}
         />

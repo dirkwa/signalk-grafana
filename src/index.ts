@@ -95,7 +95,9 @@ module.exports = (app: App) => {
         GF_SECURITY_ADMIN_PASSWORD: config.adminPassword ?? "admin",
         GF_AUTH_ANONYMOUS_ENABLED: String(config.anonymousAccess ?? true),
         GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer",
-        GF_INSTALL_PLUGINS: "tkurki-signalk-datasource",
+        GF_PLUGINS_PREINSTALL: "tkurki-signalk-datasource",
+        GF_FEATURE_TOGGLES_DISABLE: "backgroundPluginInstaller",
+        GF_SECURITY_ALLOW_EMBEDDING: "true",
       },
       restart: "unless-stopped",
     };
