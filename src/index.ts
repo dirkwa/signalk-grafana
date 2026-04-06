@@ -1,3 +1,4 @@
+import { readFileSync, writeFileSync } from "fs";
 import { IRouter } from "express";
 import { Config, ConfigSchema } from "./config/schema";
 import { generateProvisioning } from "./provisioning";
@@ -77,12 +78,12 @@ module.exports = (app: App) => {
     app.setPluginStatus("Generating Grafana provisioning...");
     generateProvisioning(dataDir, config);
 
-    app.setPluginStatus("Starting Grafana container...");
-    await containers.ensureRunning("signalk-grafana", {
+    const bind = config.bindToAllInterfaces ? "0.0.0.0" : "127.0.0.1";
+    const containerConfig = {
       image: "grafana/grafana",
       tag: config.grafanaVersion ?? "latest",
       ports: {
-        "3000/tcp": `${config.bindToAllInterfaces ? "0.0.0.0" : "127.0.0.1"}:${config.grafanaPort}`,
+        "3000/tcp": `${bind}:${config.grafanaPort}`,
       },
       networkMode: config.networkName,
       volumes: {
@@ -97,7 +98,32 @@ module.exports = (app: App) => {
         GF_INSTALL_PLUGINS: "tkurki-signalk-datasource",
       },
       restart: "unless-stopped",
+    };
+
+    const configHash = JSON.stringify({
+      tag: containerConfig.tag,
+      ports: containerConfig.ports,
+      env: containerConfig.env,
+      networkMode: containerConfig.networkMode,
     });
+    const hashFile = `${dataDir}.container-hash`;
+    let lastHash = "";
+    try {
+      lastHash = readFileSync(hashFile, "utf8");
+    } catch {
+      // first run
+    }
+
+    const state = await containers.getState("signalk-grafana");
+    if (state !== "missing" && configHash !== lastHash) {
+      app.setPluginStatus("Recreating Grafana container (config changed)...");
+      await containers.remove("signalk-grafana");
+    }
+
+    app.setPluginStatus("Starting Grafana container...");
+    await containers.ensureRunning("signalk-grafana", containerConfig);
+
+    writeFileSync(hashFile, configHash);
 
     const grafanaUrl = `http://127.0.0.1:${config.grafanaPort}`;
     const healthDeadline = Date.now() + 30000;
