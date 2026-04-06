@@ -22,6 +22,7 @@ describe("generateProvisioning", () => {
       questdbContainerName: "signalk-questdb",
       questdbPgPort: 8812,
       networkName: "sk-network",
+      signalkUrl: "",
       bindToAllInterfaces: false,
     });
 
@@ -46,6 +47,7 @@ describe("generateProvisioning", () => {
       questdbContainerName: "signalk-questdb",
       questdbPgPort: 8812,
       networkName: "sk-network",
+      signalkUrl: "",
       bindToAllInterfaces: false,
     });
 
@@ -67,6 +69,7 @@ describe("generateProvisioning", () => {
       questdbContainerName: "signalk-questdb",
       questdbPgPort: 8812,
       networkName: "sk-network",
+      signalkUrl: "",
       bindToAllInterfaces: false,
     });
 
@@ -86,6 +89,7 @@ describe("generateProvisioning", () => {
       questdbContainerName: "my-questdb",
       questdbPgPort: 9999,
       networkName: "custom-net",
+      signalkUrl: "",
       bindToAllInterfaces: false,
     });
 

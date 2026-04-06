@@ -35,6 +35,12 @@ export const ConfigSchema = Type.Object({
     title: "Container network name",
     description: "Shared Podman/Docker network for Grafana to reach QuestDB",
   }),
+  signalkUrl: Type.String({
+    default: "",
+    title: "Signal K server URL",
+    description:
+      "URL for the Signal K datasource in Grafana (e.g. http://192.168.0.122:3000). Leave empty to skip.",
+  }),
   bindToAllInterfaces: Type.Boolean({
     default: false,
     title: "Bind to 0.0.0.0",

@@ -121,6 +121,7 @@ export default function PluginConfigurationPanel({ configuration, save }) {
   const [networkName, setNetworkName] = useState(
     cfg.networkName || "sk-network",
   );
+  const [signalkUrl, setSignalkUrl] = useState(cfg.signalkUrl || "");
   const [bindToAllInterfaces, setBindToAllInterfaces] = useState(
     cfg.bindToAllInterfaces || false,
   );
@@ -212,6 +213,7 @@ export default function PluginConfigurationPanel({ configuration, save }) {
       anonymousAccess,
       questdbContainerName,
       questdbPgPort,
+      signalkUrl,
       networkName,
       bindToAllInterfaces,
     });
@@ -434,7 +436,20 @@ export default function PluginConfigurationPanel({ configuration, save }) {
         <span style={S.hint}>view dashboards without login</span>
       </div>
 
-      <div style={S.sectionTitle}>QuestDB Connection</div>
+      <div style={S.sectionTitle}>Data Sources</div>
+
+      <div style={S.fieldRow}>
+        <span style={S.label}>Signal K server URL</span>
+        <input
+          style={S.input}
+          placeholder="http://192.168.0.122:3000"
+          value={signalkUrl}
+          onChange={(e) => setSignalkUrl(e.target.value)}
+        />
+        <span style={S.hint}>
+          for live Signal K datasource (leave empty to skip)
+        </span>
+      </div>
 
       <div style={S.fieldRow}>
         <span style={S.label}>QuestDB container name</span>
