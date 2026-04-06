@@ -1,4 +1,4 @@
-import { mkdirSync, unlinkSync, writeFileSync } from "fs";
+import { chmodSync, mkdirSync, unlinkSync, writeFileSync } from "fs";
 import { join } from "path";
 import { Config } from "./config/schema";
 
@@ -8,7 +8,9 @@ export function generateProvisioning(dataDir: string, config: Config): void {
   const grafanaDataDir = join(dataDir, "grafana-data");
 
   mkdirSync(dsDir, { recursive: true });
-  mkdirSync(grafanaDataDir, { recursive: true });
+  mkdirSync(grafanaDataDir, { recursive: true, mode: 0o777 });
+  // Ensure grafana-data is world-writable so the container's grafana user (uid 472) can write
+  chmodSync(grafanaDataDir, 0o777);
 
   const questdbHost = `sk-${config.questdbContainerName}`;
 

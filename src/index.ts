@@ -345,8 +345,8 @@ module.exports = (app: App) => {
             current: string,
             latest: string,
           ): boolean => {
-            const pc = current.split(".").map(Number);
-            const pl = latest.split(".").map(Number);
+            const pc = current.split(".").map((s) => parseInt(s, 10) || 0);
+            const pl = latest.split(".").map((s) => parseInt(s, 10) || 0);
             for (let i = 0; i < Math.max(pc.length, pl.length); i++) {
               const vc = pc[i] ?? 0;
               const vl = pl[i] ?? 0;
@@ -463,8 +463,15 @@ module.exports = (app: App) => {
             return;
           }
 
-          const password =
-            req.body?.password || currentConfig?.adminPassword || "admin";
+          const password = req.body?.password;
+          if (
+            !password ||
+            typeof password !== "string" ||
+            password.length === 0
+          ) {
+            res.status(400).json({ error: "Password is required" });
+            return;
+          }
           const result = await containers.execInContainer("signalk-grafana", [
             "grafana",
             "cli",
