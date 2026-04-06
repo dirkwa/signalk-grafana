@@ -41,6 +41,12 @@ export const ConfigSchema = Type.Object({
     description:
       "Auto-detected from PORT env var. Only set to override (e.g. http://192.168.0.122:3000).",
   }),
+  subPath: Type.String({
+    default: "",
+    title: "Sub-path (reverse proxy)",
+    description:
+      "Set to /grafana/ when running behind a reverse proxy. Leave empty for direct access.",
+  }),
   bindToAllInterfaces: Type.Boolean({
     default: false,
     title: "Bind to 0.0.0.0",

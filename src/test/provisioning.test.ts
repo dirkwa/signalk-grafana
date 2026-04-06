@@ -14,6 +14,7 @@ const defaultConfig = {
   questdbPgPort: 8812,
   networkName: "sk-network",
   signalkUrl: "",
+  subPath: "",
   bindToAllInterfaces: false,
 };
 

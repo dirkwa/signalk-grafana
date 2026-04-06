@@ -122,6 +122,7 @@ export default function PluginConfigurationPanel({ configuration, save }) {
     cfg.networkName || "sk-network",
   );
   const [signalkUrl, setSignalkUrl] = useState(cfg.signalkUrl || "");
+  const [subPath, setSubPath] = useState(cfg.subPath || "");
   const [bindToAllInterfaces, setBindToAllInterfaces] = useState(
     cfg.bindToAllInterfaces || false,
   );
@@ -214,6 +215,7 @@ export default function PluginConfigurationPanel({ configuration, save }) {
       questdbContainerName,
       questdbPgPort,
       signalkUrl,
+      subPath,
       networkName,
       bindToAllInterfaces,
     });
@@ -500,6 +502,17 @@ export default function PluginConfigurationPanel({ configuration, save }) {
             ? "Caution! This can expose Grafana to the internet"
             : "Only needed for remote access outside localhost"}
         </span>
+      </div>
+
+      <div style={S.fieldRow}>
+        <span style={S.label}>Sub-path (reverse proxy)</span>
+        <input
+          style={S.input}
+          placeholder="e.g. /grafana/"
+          value={subPath}
+          onChange={(e) => setSubPath(e.target.value)}
+        />
+        <span style={S.hint}>leave empty for direct access</span>
       </div>
 
       {actionStatus && (

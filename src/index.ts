@@ -99,6 +99,12 @@ module.exports = (app: App) => {
         GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer",
         GF_FEATURE_TOGGLES_DISABLE: "backgroundPluginInstaller",
         GF_SECURITY_ALLOW_EMBEDDING: "true",
+        ...(config.subPath
+          ? {
+              GF_SERVER_ROOT_URL: `%(protocol)s://%(domain)s:%(http_port)s${config.subPath}`,
+              GF_SERVER_SERVE_FROM_SUB_PATH: "true",
+            }
+          : {}),
       },
       restart: "unless-stopped",
     };
@@ -427,9 +433,14 @@ module.exports = (app: App) => {
                 currentConfig?.anonymousAccess ?? true,
               ),
               GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer",
-              GF_PLUGINS_PREINSTALL: "tkurki-signalk-datasource",
               GF_FEATURE_TOGGLES_DISABLE: "backgroundPluginInstaller",
               GF_SECURITY_ALLOW_EMBEDDING: "true",
+              ...(currentConfig?.subPath
+                ? {
+                    GF_SERVER_ROOT_URL: `%(protocol)s://%(domain)s:%(http_port)s${currentConfig.subPath}`,
+                    GF_SERVER_SERVE_FROM_SUB_PATH: "true",
+                  }
+                : {}),
             },
             restart: "unless-stopped",
           });
