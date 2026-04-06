@@ -81,7 +81,6 @@ module.exports = (app: App) => {
         GF_SECURITY_ADMIN_PASSWORD: config.adminPassword ?? "admin",
         GF_AUTH_ANONYMOUS_ENABLED: String(config.anonymousAccess ?? true),
         GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer",
-        GF_PLUGINS_PREINSTALL: "tkurki-signalk-datasource",
         GF_FEATURE_TOGGLES_DISABLE: "backgroundPluginInstaller",
         GF_SECURITY_ALLOW_EMBEDDING: "true",
       },
@@ -125,6 +124,20 @@ module.exports = (app: App) => {
         // not ready yet
       }
       await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+
+    // Install Signal K datasource plugin via CLI (not env var — avoids race with provisioning)
+    try {
+      await containers.execInContainer("signalk-grafana", [
+        "grafana",
+        "cli",
+        "plugins",
+        "install",
+        "tkurki-signalk-datasource",
+      ]);
+      app.debug("installed tkurki-signalk-datasource plugin");
+    } catch {
+      app.debug("could not install signalk datasource plugin");
     }
 
     // Always set the admin password after startup to ensure it matches config
