@@ -78,7 +78,7 @@ module.exports = (app: App) => {
       image: "grafana/grafana",
       tag: config.grafanaVersion ?? "latest",
       ports: {
-        "3000/tcp": `0.0.0.0:${config.grafanaPort}`,
+        "3000/tcp": `${config.bindToAllInterfaces ? "0.0.0.0" : "127.0.0.1"}:${config.grafanaPort}`,
       },
       networkMode: config.networkName,
       volumes: {
@@ -311,7 +311,7 @@ module.exports = (app: App) => {
             image: "grafana/grafana",
             tag: newTag,
             ports: {
-              "3000/tcp": `0.0.0.0:${currentConfig?.grafanaPort ?? 3001}`,
+              "3000/tcp": `${currentConfig?.bindToAllInterfaces ? "0.0.0.0" : "127.0.0.1"}:${currentConfig?.grafanaPort ?? 3001}`,
             },
             networkMode: currentConfig?.networkName ?? "sk-network",
             volumes: {

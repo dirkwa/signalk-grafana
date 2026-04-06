@@ -121,6 +121,9 @@ export default function PluginConfigurationPanel({ configuration, save }) {
   const [networkName, setNetworkName] = useState(
     cfg.networkName || "sk-network",
   );
+  const [bindToAllInterfaces, setBindToAllInterfaces] = useState(
+    cfg.bindToAllInterfaces || false,
+  );
 
   const [grafanaStatus, setGrafanaStatus] = useState(null);
   const [statusLoading, setStatusLoading] = useState(true);
@@ -210,6 +213,7 @@ export default function PluginConfigurationPanel({ configuration, save }) {
       questdbContainerName,
       questdbPgPort,
       networkName,
+      bindToAllInterfaces,
     });
     setActionStatus("Saved! Plugin will restart with new configuration.");
     setStatusError(false);
@@ -427,6 +431,26 @@ export default function PluginConfigurationPanel({ configuration, save }) {
           onChange={(e) => setNetworkName(e.target.value)}
         />
         <span style={S.hint}>shared network for container DNS</span>
+      </div>
+
+      <div style={S.fieldRow}>
+        <span style={S.label}>Bind to 0.0.0.0</span>
+        <input
+          type="checkbox"
+          style={S.checkbox}
+          checked={bindToAllInterfaces}
+          onChange={(e) => setBindToAllInterfaces(e.target.checked)}
+        />
+        <span
+          style={{
+            ...S.hint,
+            color: bindToAllInterfaces ? "#ef4444" : undefined,
+          }}
+        >
+          {bindToAllInterfaces
+            ? "Caution! This can expose Grafana to the internet"
+            : "Only needed for remote access outside localhost"}
+        </span>
       </div>
 
       {actionStatus && (

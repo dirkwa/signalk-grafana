@@ -35,6 +35,12 @@ export const ConfigSchema = Type.Object({
     title: "Container network name",
     description: "Shared Podman/Docker network for Grafana to reach QuestDB",
   }),
+  bindToAllInterfaces: Type.Boolean({
+    default: false,
+    title: "Bind to 0.0.0.0",
+    description:
+      "Caution! This can expose Grafana to the internet. Only enable if you need remote access.",
+  }),
 });
 
 export type Config = Static<typeof ConfigSchema>;

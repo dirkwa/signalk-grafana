@@ -22,6 +22,7 @@ describe("generateProvisioning", () => {
       questdbContainerName: "signalk-questdb",
       questdbPgPort: 8812,
       networkName: "sk-network",
+      bindToAllInterfaces: false,
     });
 
     const dsFile = join(tempDir, "provisioning/datasources/questdb.yaml");
@@ -45,6 +46,7 @@ describe("generateProvisioning", () => {
       questdbContainerName: "signalk-questdb",
       questdbPgPort: 8812,
       networkName: "sk-network",
+      bindToAllInterfaces: false,
     });
 
     const provFile = join(tempDir, "provisioning/dashboards/signalk.yaml");
@@ -65,6 +67,7 @@ describe("generateProvisioning", () => {
       questdbContainerName: "signalk-questdb",
       questdbPgPort: 8812,
       networkName: "sk-network",
+      bindToAllInterfaces: false,
     });
 
     assert.ok(
@@ -83,6 +86,7 @@ describe("generateProvisioning", () => {
       questdbContainerName: "my-questdb",
       questdbPgPort: 9999,
       networkName: "custom-net",
+      bindToAllInterfaces: false,
     });
 
     const content = readFileSync(
