@@ -384,7 +384,7 @@ export default function PluginConfigurationPanel({ configuration, save }) {
         <span style={S.label}>Admin password</span>
         <input
           style={S.input}
-          type="password"
+          type="text"
           value={adminPassword}
           onChange={(e) => setAdminPassword(e.target.value)}
         />
