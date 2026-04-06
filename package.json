@@ -12,7 +12,7 @@
   },
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc && webpack",
+    "build": "tsc && cp -r src/dashboards dist/ && webpack",
     "build:config": "webpack",
     "watch": "tsc --watch",
     "prettier": "prettier --write .",
