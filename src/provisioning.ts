@@ -16,7 +16,7 @@ export function generateProvisioning(dataDir: string, config: Config): void {
 datasources:
   - name: QuestDB
     uid: signalk-questdb
-    type: postgres
+    type: grafana-postgresql-datasource
     url: ${questdbHost}:${config.questdbPgPort}
     user: admin
     database: qdb

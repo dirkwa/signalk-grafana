@@ -33,7 +33,7 @@ describe("generateProvisioning", () => {
 
     const content = readFileSync(dsFile, "utf8");
     assert.ok(content.includes("sk-signalk-questdb:8812"));
-    assert.ok(content.includes("type: postgres"));
+    assert.ok(content.includes("type: grafana-postgresql-datasource"));
     assert.ok(content.includes("uid: signalk-questdb"));
     assert.ok(content.includes("database: qdb"));
     assert.ok(content.includes("sslmode: disable"));
