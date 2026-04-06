@@ -262,14 +262,17 @@ module.exports = (app: App) => {
             if (stable) latestVersion = stable.tag_name.replace(/^v/, "");
           }
 
-          const semverGreater = (a: string, b: string): boolean => {
-            const pa = a.split(".").map(Number);
-            const pb = b.split(".").map(Number);
-            for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-              const va = pa[i] ?? 0;
-              const vb = pb[i] ?? 0;
-              if (vb > va) return true;
-              if (vb < va) return false;
+          const isNewerAvailable = (
+            current: string,
+            latest: string,
+          ): boolean => {
+            const pc = current.split(".").map(Number);
+            const pl = latest.split(".").map(Number);
+            for (let i = 0; i < Math.max(pc.length, pl.length); i++) {
+              const vc = pc[i] ?? 0;
+              const vl = pl[i] ?? 0;
+              if (vl > vc) return true;
+              if (vl < vc) return false;
             }
             return false;
           };
@@ -277,7 +280,7 @@ module.exports = (app: App) => {
           const updateAvailable =
             currentVersion !== "unknown" &&
             latestVersion !== "unknown" &&
-            semverGreater(currentVersion, latestVersion);
+            isNewerAvailable(currentVersion, latestVersion);
 
           res.json({ currentVersion, latestVersion, updateAvailable });
         } catch (err) {
@@ -346,6 +349,9 @@ module.exports = (app: App) => {
                 currentConfig?.anonymousAccess ?? true,
               ),
               GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer",
+              GF_PLUGINS_PREINSTALL: "tkurki-signalk-datasource",
+              GF_FEATURE_TOGGLES_DISABLE: "backgroundPluginInstaller",
+              GF_SECURITY_ALLOW_EMBEDDING: "true",
             },
             restart: "unless-stopped",
           });

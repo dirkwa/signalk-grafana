@@ -36,7 +36,8 @@ datasources:
   writeFileSync(join(dsDir, "questdb.yaml"), datasourceYaml);
 
   const skHost =
-    config.signalkUrl || `host.containers.internal:${process.env.PORT || 3000}`;
+    config.signalkUrl?.replace(/^https?:\/\//, "") ||
+    `host.containers.internal:${process.env.PORT || 3000}`;
   const signalkDsYaml = `apiVersion: 1
 datasources:
   - name: Signal K
