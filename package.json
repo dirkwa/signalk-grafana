@@ -1,6 +1,6 @@
 {
   "name": "signalk-grafana",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Managed Grafana with auto-provisioned QuestDB dashboards for Signal K",
   "keywords": [
     "signalk-node-server-plugin",
@@ -26,6 +26,7 @@
   "engines": {
     "node": ">=22"
   },
+  "author": "Dirk Wahrheit <dirkwahrheit@gmail.com>",
   "license": "MIT",
   "repository": {
     "type": "git",
