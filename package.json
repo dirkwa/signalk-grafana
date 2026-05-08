@@ -1,6 +1,6 @@
 {
   "name": "signalk-grafana",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "Managed Grafana with auto-provisioned QuestDB dashboards for Signal K",
   "keywords": [
     "signalk-node-server-plugin",
@@ -54,17 +54,5 @@
     "typescript-eslint": "^8.58.0",
     "webpack": "^5.105.4",
     "webpack-cli": "^7.0.2"
-  },
-  "peerDependencies": {
-    "signalk-container": ">=0.1.0",
-    "signalk-questdb": ">=0.2.0"
-  },
-  "peerDependenciesMeta": {
-    "signalk-container": {
-      "optional": true
-    },
-    "signalk-questdb": {
-      "optional": true
-    }
   }
 }
