@@ -1,6 +1,13 @@
-import { chmodSync, mkdirSync, unlinkSync, writeFileSync } from "fs";
+import { chmodSync, mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import { Config } from "./config/schema";
+
+export function resolveSignalkHost(config: Config): string {
+  return (
+    config.signalkUrl?.replace(/^https?:\/\//, "") ||
+    `host.containers.internal:${process.env.PORT || 3000}`
+  );
+}
 
 export function generateProvisioning(dataDir: string, config: Config): void {
   const provDir = join(dataDir, "provisioning");
@@ -14,7 +21,7 @@ export function generateProvisioning(dataDir: string, config: Config): void {
 
   const questdbHost = `sk-${config.questdbContainerName}`;
 
-  const datasourceYaml = `apiVersion: 1
+  const questdbYaml = `apiVersion: 1
 datasources:
   - name: QuestDB
     uid: signalk-questdb
@@ -32,12 +39,22 @@ datasources:
       password: quest
 `;
 
-  writeFileSync(join(dsDir, "questdb.yaml"), datasourceYaml);
+  writeFileSync(join(dsDir, "questdb.yaml"), questdbYaml);
 
-  // Remove stale SK datasource provisioning file (crashes Grafana if plugin not installed)
-  try {
-    unlinkSync(join(dsDir, "signalk.yaml"));
-  } catch {
-    // doesn't exist
-  }
+  const skHost = resolveSignalkHost(config);
+  const signalkYaml = `apiVersion: 1
+datasources:
+  - name: Signal K
+    uid: signalk
+    type: tkurki-signalk-datasource
+    access: proxy
+    url: http://${skHost}
+    editable: true
+    jsonData:
+      context: self
+      hostname: ${skHost}
+      ssl: false
+`;
+
+  writeFileSync(join(dsDir, "signalk.yaml"), signalkYaml);
 }

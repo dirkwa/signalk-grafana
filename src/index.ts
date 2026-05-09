@@ -98,6 +98,7 @@ module.exports = (app: App) => {
         GF_AUTH_ANONYMOUS_ENABLED: String(config.anonymousAccess ?? true),
         GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer",
         GF_FEATURE_TOGGLES_DISABLE: "backgroundPluginInstaller",
+        GF_INSTALL_PLUGINS: "tkurki-signalk-datasource",
         GF_SECURITY_ALLOW_EMBEDDING: "true",
         ...(config.subPath
           ? {
@@ -148,20 +149,6 @@ module.exports = (app: App) => {
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
 
-    // Install Signal K datasource plugin via CLI (not env var — avoids race with provisioning)
-    try {
-      await containers.execInContainer("signalk-grafana", [
-        "grafana",
-        "cli",
-        "plugins",
-        "install",
-        "tkurki-signalk-datasource",
-      ]);
-      app.debug("installed tkurki-signalk-datasource plugin");
-    } catch {
-      app.debug("could not install signalk datasource plugin");
-    }
-
     // Always set the admin password after startup to ensure it matches config
     try {
       await containers.execInContainer("signalk-grafana", [
@@ -173,44 +160,6 @@ module.exports = (app: App) => {
       ]);
     } catch {
       app.debug("could not set admin password");
-    }
-
-    // Provision Signal K datasource via API (not file — plugin may not be ready on first boot)
-    try {
-      const skHost =
-        config.signalkUrl?.replace(/^https?:\/\//, "") ||
-        `host.containers.internal:${process.env.PORT || 3000}`;
-      const dsCheck = await fetch(
-        `${grafanaUrl}/api/datasources/name/Signal%20K`,
-        {
-          headers: {
-            Authorization: `Basic ${Buffer.from(`admin:${config.adminPassword ?? "admin"}`).toString("base64")}`,
-          },
-          signal: AbortSignal.timeout(3000),
-        },
-      );
-      if (dsCheck.status === 404) {
-        await fetch(`${grafanaUrl}/api/datasources`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Basic ${Buffer.from(`admin:${config.adminPassword ?? "admin"}`).toString("base64")}`,
-          },
-          body: JSON.stringify({
-            name: "Signal K",
-            type: "tkurki-signalk-datasource",
-            access: "proxy",
-            url: `http://${skHost}`,
-            jsonData: { context: "self", hostname: skHost, ssl: false },
-          }),
-          signal: AbortSignal.timeout(5000),
-        });
-        app.debug("provisioned Signal K datasource via API");
-      }
-    } catch {
-      app.debug(
-        "could not provision Signal K datasource (plugin may not be installed)",
-      );
     }
 
     app.setPluginStatus(`Grafana running at port ${config.grafanaPort}`);
@@ -434,6 +383,7 @@ module.exports = (app: App) => {
               ),
               GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer",
               GF_FEATURE_TOGGLES_DISABLE: "backgroundPluginInstaller",
+              GF_INSTALL_PLUGINS: "tkurki-signalk-datasource",
               GF_SECURITY_ALLOW_EMBEDDING: "true",
               ...(currentConfig?.subPath
                 ? {
