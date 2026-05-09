@@ -11,6 +11,7 @@ Runs Grafana in a container (via [signalk-container](https://github.com/dirkwa/s
 - **Shared container network** -- Grafana and QuestDB communicate on a private Podman/Docker network
 - **Table auto-discovery** -- QuestDB supports `information_schema`, Grafana query builder works
 - **Anonymous access** -- view dashboards without login (configurable)
+- **Live reachability** -- config panel shows whether Grafana can actually reach your Signal K server
 - **One-click update** -- check for new Grafana versions and update from the config panel
 - **Password management** -- set admin password from Signal K config panel
 - **Config panel** -- Grafana status with direct link, settings, all in Admin UI
@@ -111,17 +112,18 @@ QuestDB's `SAMPLE BY` handles time bucketing (e.g., `SAMPLE BY 10s`, `SAMPLE BY 
 
 ## Configuration
 
-| Setting               | Default           | Description                                     |
-| --------------------- | ----------------- | ----------------------------------------------- |
-| Grafana port          | `3001`            | Host port for Grafana UI                        |
-| Image version         | `latest`          | Grafana Docker image tag                        |
-| Admin password        | `admin`           | Grafana admin password (applied on every start) |
-| Anonymous access      | `true`            | Allow viewing without login                     |
-| Signal K URL override | auto              | Auto-detected, only set to override             |
-| QuestDB container     | `signalk-questdb` | Container name (without sk- prefix)             |
-| PostgreSQL port       | `8812`            | QuestDB PG wire port                            |
-| Network name          | `sk-network`      | Shared container network name                   |
-| Bind to 0.0.0.0       | `false`           | Expose Grafana outside localhost                |
+| Setting               | Default           | Description                                                  |
+| --------------------- | ----------------- | ------------------------------------------------------------ |
+| Grafana port          | `3001`            | Host port for Grafana UI                                     |
+| Image version         | `latest`          | Grafana Docker image tag                                     |
+| Admin password        | `admin`           | Grafana admin password (applied on every start)              |
+| Anonymous access      | `true`            | Allow viewing without login                                  |
+| Signal K URL override | auto              | Auto-detected; set to override (use `http://` or `https://`) |
+| QuestDB container     | `signalk-questdb` | Container name (without sk- prefix)                          |
+| PostgreSQL port       | `8812`            | QuestDB PG wire port                                         |
+| Network name          | `sk-network`      | Shared container network name                                |
+| Bind to 0.0.0.0       | `false`           | Expose Grafana outside localhost                             |
+| Sub-path              | empty             | Set to `/grafana/` when running behind a reverse proxy       |
 
 ## Requirements
 
