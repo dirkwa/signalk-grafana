@@ -13,6 +13,11 @@ export function resolveSignalkEndpoint(config: Config): SignalkEndpoint {
       ? config.signalkUrl
       : `http://${config.signalkUrl}`;
     const parsed = new URL(raw);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error(
+        `Invalid signalkUrl protocol "${parsed.protocol}". Use http:// or https://.`,
+      );
+    }
     return { host: parsed.host, ssl: parsed.protocol === "https:" };
   }
   return {

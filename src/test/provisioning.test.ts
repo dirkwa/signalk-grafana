@@ -109,6 +109,18 @@ describe("generateProvisioning", () => {
     assert.ok(content.includes("ssl: false"));
   });
 
+  it("rejects signalkUrl with non-http(s) scheme instead of silently downgrading", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "grafana-test-"));
+    assert.throws(
+      () =>
+        generateProvisioning(tempDir, {
+          ...defaultConfig,
+          signalkUrl: "htps://192.168.0.122:3000",
+        }),
+      /Invalid signalkUrl protocol "htps:"/,
+    );
+  });
+
   it("uses custom QuestDB container name and port", () => {
     tempDir = mkdtempSync(join(tmpdir(), "grafana-test-"));
     generateProvisioning(tempDir, {
