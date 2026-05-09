@@ -2,11 +2,23 @@ import { chmodSync, mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import { Config } from "./config/schema";
 
-export function resolveSignalkHost(config: Config): string {
-  return (
-    config.signalkUrl?.replace(/^https?:\/\//, "") ||
-    `host.containers.internal:${process.env.PORT || 3000}`
-  );
+export interface SignalkEndpoint {
+  host: string;
+  ssl: boolean;
+}
+
+export function resolveSignalkEndpoint(config: Config): SignalkEndpoint {
+  if (config.signalkUrl) {
+    const raw = config.signalkUrl.includes("://")
+      ? config.signalkUrl
+      : `http://${config.signalkUrl}`;
+    const parsed = new URL(raw);
+    return { host: parsed.host, ssl: parsed.protocol === "https:" };
+  }
+  return {
+    host: `host.containers.internal:${process.env.PORT || 3000}`,
+    ssl: false,
+  };
 }
 
 export function generateProvisioning(dataDir: string, config: Config): void {
@@ -41,19 +53,19 @@ datasources:
 
   writeFileSync(join(dsDir, "questdb.yaml"), questdbYaml);
 
-  const skHost = resolveSignalkHost(config);
+  const { host: skHost, ssl: skSsl } = resolveSignalkEndpoint(config);
   const signalkYaml = `apiVersion: 1
 datasources:
   - name: Signal K
     uid: signalk
     type: tkurki-signalk-datasource
     access: proxy
-    url: http://${skHost}
+    url: ${skSsl ? "https" : "http"}://${skHost}
     editable: true
     jsonData:
       context: self
       hostname: ${skHost}
-      ssl: false
+      ssl: ${skSsl}
 `;
 
   writeFileSync(join(dsDir, "signalk.yaml"), signalkYaml);
