@@ -62,7 +62,7 @@ describe("generateProvisioning", () => {
     assert.ok(content.includes("context: self"));
   });
 
-  it("uses signalkUrl override (stripping http(s) prefix) for Signal K datasource", () => {
+  it("preserves https scheme in signalkUrl override", () => {
     tempDir = mkdtempSync(join(tmpdir(), "grafana-test-"));
     generateProvisioning(tempDir, {
       ...defaultConfig,
@@ -73,8 +73,40 @@ describe("generateProvisioning", () => {
       join(tempDir, "provisioning/datasources/signalk.yaml"),
       "utf8",
     );
+    assert.ok(content.includes("url: https://192.168.0.122:3000"));
+    assert.ok(content.includes("hostname: 192.168.0.122:3000"));
+    assert.ok(content.includes("ssl: true"));
+  });
+
+  it("preserves http scheme in signalkUrl override", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "grafana-test-"));
+    generateProvisioning(tempDir, {
+      ...defaultConfig,
+      signalkUrl: "http://192.168.0.122:3000",
+    });
+
+    const content = readFileSync(
+      join(tempDir, "provisioning/datasources/signalk.yaml"),
+      "utf8",
+    );
+    assert.ok(content.includes("url: http://192.168.0.122:3000"));
+    assert.ok(content.includes("ssl: false"));
+  });
+
+  it("defaults to http when signalkUrl override has no scheme", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "grafana-test-"));
+    generateProvisioning(tempDir, {
+      ...defaultConfig,
+      signalkUrl: "192.168.0.122:3000",
+    });
+
+    const content = readFileSync(
+      join(tempDir, "provisioning/datasources/signalk.yaml"),
+      "utf8",
+    );
     assert.ok(content.includes("url: http://192.168.0.122:3000"));
     assert.ok(content.includes("hostname: 192.168.0.122:3000"));
+    assert.ok(content.includes("ssl: false"));
   });
 
   it("uses custom QuestDB container name and port", () => {
