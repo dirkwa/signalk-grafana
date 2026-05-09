@@ -12,6 +12,10 @@
     "requires": [
       "signalk-container",
       "signalk-questdb"
+    ],
+    "screenshots": [
+      "./docs/screenshot/signalk_grafana_1.png",
+      "./docs/screenshot/signalk_grafana_2.png"
     ]
   },
   "main": "dist/index.js",
