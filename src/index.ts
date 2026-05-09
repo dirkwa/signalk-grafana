@@ -563,6 +563,12 @@ module.exports = (app: App) => {
           ]);
 
           if (result.exitCode === 0) {
+            // Keep currentConfig in sync so /api/status's Signal K probe
+            // (which authenticates with admin:currentConfig.adminPassword)
+            // doesn't 401 until the next plugin restart.
+            if (currentConfig) {
+              currentConfig.adminPassword = password;
+            }
             res.json({
               status: "ok",
               message: "Admin password updated.",
