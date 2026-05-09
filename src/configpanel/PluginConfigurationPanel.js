@@ -272,6 +272,53 @@ export default function PluginConfigurationPanel({ configuration, save }) {
         </div>
       )}
 
+      {isRunning && grafanaStatus.signalk && (
+        <div style={S.card}>
+          <div
+            style={{
+              ...S.cardIcon,
+              background: grafanaStatus.signalk.reachable
+                ? "#0ea5e9"
+                : "#fef2f2",
+              color: grafanaStatus.signalk.reachable ? "#fff" : "#ef4444",
+            }}
+          >
+            SK
+          </div>
+          <div style={S.cardInfo}>
+            <div style={S.cardTitle}>Signal K datasource</div>
+            <div style={S.cardMeta}>
+              {grafanaStatus.signalk.reachable
+                ? `Reachable from Grafana${
+                    grafanaStatus.signalk.version
+                      ? ` · v${grafanaStatus.signalk.version}`
+                      : ""
+                  }${
+                    grafanaStatus.signalk.url
+                      ? ` · ${grafanaStatus.signalk.url}`
+                      : ""
+                  }`
+                : `Unreachable from Grafana${
+                    grafanaStatus.signalk.error
+                      ? ` (${grafanaStatus.signalk.error})`
+                      : ""
+                  }`}
+            </div>
+          </div>
+          <div
+            style={{
+              ...S.stateIndicator,
+              background: grafanaStatus.signalk.reachable
+                ? "#10b981"
+                : "#ef4444",
+            }}
+            title={
+              grafanaStatus.signalk.reachable ? "Reachable" : "Unreachable"
+            }
+          />
+        </div>
+      )}
+
       {isRunning && (
         <div
           style={{
