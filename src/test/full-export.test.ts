@@ -218,6 +218,9 @@ describe("full-export — provisioning", () => {
     writeFileSync(yamlPath, "apiVersion: 1\n");
 
     const res = fakeRes();
+    // `handleProvisioningFile` awaits the pipeline internally, so by
+    // the time this returns all bytes are already in streamedChunks
+    // via our synchronous fake `write`.
     await handleProvisioningFile(
       fakeReq({
         relPath: encodeURIComponent("datasources/ok.yaml"),
@@ -225,9 +228,6 @@ describe("full-export — provisioning", () => {
       res as never,
       { dataDir, exec: noopExec },
     );
-    // The pipeline emits 'finish' on the response. Wait briefly for
-    // the streamed bytes to land.
-    await new Promise((r) => setTimeout(r, 10));
     const streamed = Buffer.concat(res.streamedChunks).toString("utf-8");
     assert.equal(streamed, "apiVersion: 1\n");
   });
@@ -269,6 +269,10 @@ describe("full-export — DB checkpoint lock", () => {
 
     const res1 = fakeRes();
     const res2 = fakeRes();
+    // The handler's coalesce check (`if (!inflightDbExport)`) runs
+    // synchronously before any `await`. Issuing both calls back-to-
+    // back means `p2` sees the inflight promise `p1` created — no
+    // sleep needed to "let it queue".
     const p1 = handleDbExport(fakeReq() as never, res1 as never, {
       dataDir,
       exec,
@@ -277,8 +281,6 @@ describe("full-export — DB checkpoint lock", () => {
       dataDir,
       exec,
     });
-    // Let the second call queue onto the same inflight promise.
-    await new Promise((r) => setTimeout(r, 10));
     resolveBackup();
     await Promise.all([p1, p2]);
 
