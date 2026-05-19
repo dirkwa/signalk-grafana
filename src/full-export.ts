@@ -1,9 +1,16 @@
-import type { Request, Response } from "express";
+import type { Response } from "express";
 import { createReadStream } from "fs";
 import { readdir, stat, unlink } from "fs/promises";
 import { createHash } from "crypto";
 import { join, normalize, relative, sep } from "path";
 import { pipeline } from "stream/promises";
+
+// Narrow request shape — handlers read only `req.params`. Typing it
+// this way lets tests pass plain `{ params: {...} }` objects without
+// `as never` casts.
+export interface ExportRequest {
+  params: Record<string, string | string[] | undefined>;
+}
 
 // signalk-backup pulls these endpoints over loopback HTTP; this module
 // gives it a consistent SQLite checkpoint of grafana.db plus the
@@ -49,10 +56,15 @@ export interface FullExportDeps {
   log?: (msg: string) => void;
 }
 
-// Coalesce concurrent DB-export requests onto a single sqlite3 .backup.
-// Without this, a periodic scheduler firing at the same moment as a
-// manual export would race on the same checkpoint file.
+// Coalesce concurrent DB-export requests onto a single sqlite3 .backup
+// and synchronize cleanup so the file lives long enough for every
+// piggybacking reader to consume it. Without coalescing, a periodic
+// scheduler firing at the same moment as a manual export would race
+// on the same checkpoint file. Without reader counting, the first
+// finisher would unlink the file out from under the second reader
+// (the second reader's createReadStream would hit ENOENT).
 let inflightDbExport: Promise<void> | null = null;
+let inflightReaders = 0;
 
 function defaultLog(msg: string): void {
   console.error(`[full-export] ${msg}`);
@@ -119,17 +131,17 @@ async function runCheckpoint(deps: FullExportDeps): Promise<string> {
 }
 
 export async function handleDbExport(
-  _req: Request,
+  _req: ExportRequest,
   res: Response,
   deps: FullExportDeps,
 ): Promise<void> {
-  // Coalesce: if a checkpoint is already running, wait for it.
+  // Coalesce: piggyback on any in-flight checkpoint AND keep the
+  // checkpoint file alive until the last coalesced reader finishes
+  // streaming it. Increment before the await so a request arriving
+  // during another request's streaming phase still pins the file.
+  inflightReaders++;
   if (!inflightDbExport) {
-    inflightDbExport = runCheckpoint(deps)
-      .then(() => undefined)
-      .finally(() => {
-        inflightDbExport = null;
-      });
+    inflightDbExport = runCheckpoint(deps).then(() => undefined);
   }
 
   let hostPath: string;
@@ -142,6 +154,7 @@ export async function handleDbExport(
       500,
       err instanceof Error ? err.message : "checkpoint failed",
     );
+    await releaseReader(null);
     return;
   }
 
@@ -155,10 +168,21 @@ export async function handleDbExport(
     // Response is already in-flight; can't change status. The client
     // sees a truncated body and treats it as a failed download.
   } finally {
-    // Best-effort cleanup. Even if unlink fails we don't want to
-    // 500 — the checkpoint file is harmless under the bind mount.
-    await unlink(hostPath).catch(() => undefined);
+    await releaseReader(hostPath);
   }
+}
+
+// Drop the in-flight reader count by one; when the last reader leaves,
+// clear the inflight slot so the next request triggers a fresh
+// checkpoint and unlink the checkpoint file if we have one. Cleanup
+// is best-effort — a leftover file under .signalk-backup/ is harmless
+// (next export's `rm -f` clears it) and we never want to surface an
+// unlink error to a successfully-streamed response.
+async function releaseReader(hostPath: string | null): Promise<void> {
+  inflightReaders--;
+  if (inflightReaders > 0) return;
+  inflightDbExport = null;
+  if (hostPath) await unlink(hostPath).catch(() => undefined);
 }
 
 interface ManifestEntry {
@@ -214,7 +238,7 @@ async function buildManifest(
 }
 
 export async function handleDashboardManifest(
-  _req: Request,
+  _req: ExportRequest,
   res: Response,
   deps: FullExportDeps,
 ): Promise<void> {
@@ -232,7 +256,7 @@ export async function handleDashboardManifest(
 }
 
 export async function handleDashboardFile(
-  req: Request,
+  req: ExportRequest,
   res: Response,
   deps: FullExportDeps,
 ): Promise<void> {
@@ -263,7 +287,7 @@ export async function handleDashboardFile(
 }
 
 export async function handleProvisioningManifest(
-  _req: Request,
+  _req: ExportRequest,
   res: Response,
   deps: FullExportDeps,
 ): Promise<void> {
@@ -281,7 +305,7 @@ export async function handleProvisioningManifest(
 }
 
 export async function handleProvisioningFile(
-  req: Request,
+  req: ExportRequest,
   res: Response,
   deps: FullExportDeps,
 ): Promise<void> {
@@ -336,4 +360,5 @@ export async function handleProvisioningFile(
 // test cases. Exported with a leading underscore to flag intent.
 export function _resetInflightForTesting(): void {
   inflightDbExport = null;
+  inflightReaders = 0;
 }

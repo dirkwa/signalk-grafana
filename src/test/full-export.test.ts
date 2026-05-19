@@ -12,11 +12,12 @@ import {
   handleProvisioningFile,
   handleProvisioningManifest,
   type ExecFn,
+  type ExportRequest,
 } from "../full-export";
 
-// Minimal Request/Response stand-ins. Express plays fast and loose
-// with types; the handlers only touch the surface we expose here.
-function fakeReq(params: Record<string, string> = {}): unknown {
+// Minimal request mock — handlers only read `req.params`, so we expose
+// only that. `Response` is faked separately below.
+function fakeReq(params: Record<string, string> = {}): ExportRequest {
   return { params };
 }
 
@@ -76,7 +77,7 @@ describe("full-export — dashboard manifest", () => {
   it("returns empty list when dashboards dir is missing", async () => {
     dataDir = mkdtempSync(join(tmpdir(), "grafana-fe-"));
     const res = fakeRes();
-    await handleDashboardManifest(fakeReq() as never, res as never, {
+    await handleDashboardManifest(fakeReq(), res as never, {
       dataDir,
       exec: noopExec,
     });
@@ -93,7 +94,7 @@ describe("full-export — dashboard manifest", () => {
     );
 
     const res = fakeRes();
-    await handleDashboardManifest(fakeReq() as never, res as never, {
+    await handleDashboardManifest(fakeReq(), res as never, {
       dataDir,
       exec: noopExec,
     });
@@ -123,7 +124,7 @@ describe("full-export — dashboard file", () => {
     dataDir = mkdtempSync(join(tmpdir(), "grafana-fe-"));
     const res = fakeRes();
     await handleDashboardFile(
-      fakeReq({ name: "../../../etc/passwd" }) as never,
+      fakeReq({ name: "../../../etc/passwd" }),
       res as never,
       { dataDir, exec: noopExec },
     );
@@ -134,7 +135,7 @@ describe("full-export — dashboard file", () => {
     dataDir = mkdtempSync(join(tmpdir(), "grafana-fe-"));
     const res = fakeRes();
     await handleDashboardFile(
-      fakeReq({ name: "subdir/foo.json" }) as never,
+      fakeReq({ name: "subdir/foo.json" }),
       res as never,
       { dataDir, exec: noopExec },
     );
@@ -145,11 +146,10 @@ describe("full-export — dashboard file", () => {
     dataDir = mkdtempSync(join(tmpdir(), "grafana-fe-"));
     mkdirSync(join(dataDir, "dashboards"));
     const res = fakeRes();
-    await handleDashboardFile(
-      fakeReq({ name: "missing.json" }) as never,
-      res as never,
-      { dataDir, exec: noopExec },
-    );
+    await handleDashboardFile(fakeReq({ name: "missing.json" }), res as never, {
+      dataDir,
+      exec: noopExec,
+    });
     assert.equal(res.statusCode, 404);
   });
 });
@@ -176,7 +176,7 @@ describe("full-export — provisioning", () => {
     );
 
     const res = fakeRes();
-    await handleProvisioningManifest(fakeReq() as never, res as never, {
+    await handleProvisioningManifest(fakeReq(), res as never, {
       dataDir,
       exec: noopExec,
     });
@@ -191,7 +191,7 @@ describe("full-export — provisioning", () => {
     dataDir = mkdtempSync(join(tmpdir(), "grafana-fe-"));
     const res = fakeRes();
     await handleProvisioningFile(
-      fakeReq({ relPath: encodeURIComponent("../etc/passwd") }) as never,
+      fakeReq({ relPath: encodeURIComponent("../etc/passwd") }),
       res as never,
       { dataDir, exec: noopExec },
     );
@@ -202,7 +202,7 @@ describe("full-export — provisioning", () => {
     dataDir = mkdtempSync(join(tmpdir(), "grafana-fe-"));
     const res = fakeRes();
     await handleProvisioningFile(
-      fakeReq({ relPath: encodeURIComponent("./datasources/x.yaml") }) as never,
+      fakeReq({ relPath: encodeURIComponent("./datasources/x.yaml") }),
       res as never,
       { dataDir, exec: noopExec },
     );
@@ -224,7 +224,7 @@ describe("full-export — provisioning", () => {
     await handleProvisioningFile(
       fakeReq({
         relPath: encodeURIComponent("datasources/ok.yaml"),
-      }) as never,
+      }),
       res as never,
       { dataDir, exec: noopExec },
     );
@@ -273,11 +273,11 @@ describe("full-export — DB checkpoint lock", () => {
     // synchronously before any `await`. Issuing both calls back-to-
     // back means `p2` sees the inflight promise `p1` created — no
     // sleep needed to "let it queue".
-    const p1 = handleDbExport(fakeReq() as never, res1 as never, {
+    const p1 = handleDbExport(fakeReq(), res1 as never, {
       dataDir,
       exec,
     });
-    const p2 = handleDbExport(fakeReq() as never, res2 as never, {
+    const p2 = handleDbExport(fakeReq(), res2 as never, {
       dataDir,
       exec,
     });
