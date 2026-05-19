@@ -142,6 +142,21 @@ describe("full-export — dashboard file", () => {
     assert.equal(res.statusCode, 400);
   });
 
+  it("rejects bare '.' and '..' as dashboard name with a clean 400", async () => {
+    // SAFE_FILENAME allows these as a side-effect of [._]; the handler
+    // explicitly rejects them so the response is 400, not a confusing
+    // 500 leaking 'path escapes root' from safeJoin.
+    dataDir = mkdtempSync(join(tmpdir(), "grafana-fe-"));
+    for (const name of [".", ".."]) {
+      const res = fakeRes();
+      await handleDashboardFile(fakeReq({ name }), res as never, {
+        dataDir,
+        exec: noopExec,
+      });
+      assert.equal(res.statusCode, 400, `expected 400 for name="${name}"`);
+    }
+  });
+
   it("404s on a missing file even with safe name", async () => {
     dataDir = mkdtempSync(join(tmpdir(), "grafana-fe-"));
     mkdirSync(join(dataDir, "dashboards"));

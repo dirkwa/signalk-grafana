@@ -262,7 +262,11 @@ export async function handleDashboardFile(
 ): Promise<void> {
   const rawName = req.params.name;
   const name = typeof rawName === "string" ? rawName : "";
-  if (!SAFE_FILENAME.test(name)) {
+  // SAFE_FILENAME allows `.` and `..` as a side-effect of `[a-zA-Z0-9._-]+`,
+  // so reject them explicitly. Without this they'd hit safeJoin and produce
+  // a 500 with a "path escapes root" message that leaks an internal detail
+  // (and is the wrong status — the input is malformed, not the runtime).
+  if (name === "." || name === ".." || !SAFE_FILENAME.test(name)) {
     sendError(res, 400, "invalid dashboard name");
     return;
   }
