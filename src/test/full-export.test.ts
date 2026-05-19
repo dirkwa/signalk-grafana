@@ -19,7 +19,7 @@ import {
   handleDbExport,
   handleProvisioningFile,
   handleProvisioningManifest,
-  type ExecFn,
+  type DbBackupFn,
   type ExportRequest,
 } from "../full-export";
 
@@ -92,7 +92,6 @@ describe("full-export — dashboard manifest", () => {
     const res = fakeRes();
     await handleDashboardManifest(fakeReq(), res, {
       dataDir,
-      exec: noopExec,
     });
     assert.deepEqual(res.jsonBody, { dashboards: [] });
   });
@@ -109,7 +108,6 @@ describe("full-export — dashboard manifest", () => {
     const res = fakeRes();
     await handleDashboardManifest(fakeReq(), res, {
       dataDir,
-      exec: noopExec,
     });
     const body = res.jsonBody as { dashboards: Array<Record<string, unknown>> };
     assert.equal(body.dashboards.length, 2);
@@ -142,7 +140,6 @@ describe("full-export — dashboard manifest", () => {
     const res = fakeRes();
     await handleDashboardManifest(fakeReq(), res, {
       dataDir,
-      exec: noopExec,
     });
     const body = res.jsonBody as { dashboards: Array<Record<string, unknown>> };
     assert.equal(body.dashboards.length, 1);
@@ -161,7 +158,6 @@ describe("full-export — dashboard file", () => {
     const res = fakeRes();
     await handleDashboardFile(fakeReq({ name: "../../../etc/passwd" }), res, {
       dataDir,
-      exec: noopExec,
     });
     assert.equal(res.statusCode, 400);
   });
@@ -171,7 +167,6 @@ describe("full-export — dashboard file", () => {
     const res = fakeRes();
     await handleDashboardFile(fakeReq({ name: "subdir/foo.json" }), res, {
       dataDir,
-      exec: noopExec,
     });
     assert.equal(res.statusCode, 400);
   });
@@ -183,10 +178,7 @@ describe("full-export — dashboard file", () => {
     dataDir = mkdtempSync(join(tmpdir(), "grafana-fe-"));
     for (const name of [".", ".."]) {
       const res = fakeRes();
-      await handleDashboardFile(fakeReq({ name }), res, {
-        dataDir,
-        exec: noopExec,
-      });
+      await handleDashboardFile(fakeReq({ name }), res, { dataDir });
       assert.equal(res.statusCode, 400, `expected 400 for name="${name}"`);
     }
   });
@@ -212,7 +204,6 @@ describe("full-export — dashboard file", () => {
     const res = fakeRes();
     await handleDashboardFile(fakeReq({ name: "evil.json" }), res, {
       dataDir,
-      exec: noopExec,
     });
     rmSync(targetPath, { force: true });
     assert.equal(res.statusCode, 400);
@@ -224,7 +215,6 @@ describe("full-export — dashboard file", () => {
     const res = fakeRes();
     await handleDashboardFile(fakeReq({ name: "missing.json" }), res, {
       dataDir,
-      exec: noopExec,
     });
     assert.equal(res.statusCode, 404);
   });
@@ -254,7 +244,6 @@ describe("full-export — provisioning", () => {
     const res = fakeRes();
     await handleProvisioningManifest(fakeReq(), res, {
       dataDir,
-      exec: noopExec,
     });
     const body = res.jsonBody as { files: Array<Record<string, unknown>> };
     assert.equal(body.files.length, 2);
@@ -269,7 +258,7 @@ describe("full-export — provisioning", () => {
     await handleProvisioningFile(
       fakeReq({ relPath: encodeURIComponent("../etc/passwd") }),
       res,
-      { dataDir, exec: noopExec },
+      { dataDir },
     );
     assert.equal(res.statusCode, 400);
   });
@@ -280,7 +269,7 @@ describe("full-export — provisioning", () => {
     await handleProvisioningFile(
       fakeReq({ relPath: encodeURIComponent("./datasources/x.yaml") }),
       res,
-      { dataDir, exec: noopExec },
+      { dataDir },
     );
     assert.equal(res.statusCode, 400);
   });
@@ -302,7 +291,7 @@ describe("full-export — provisioning", () => {
         relPath: encodeURIComponent("datasources/ok.yaml"),
       }),
       res,
-      { dataDir, exec: noopExec },
+      { dataDir },
     );
     const streamed = Buffer.concat(res.streamedChunks).toString("utf-8");
     assert.equal(streamed, "apiVersion: 1\n");
@@ -317,30 +306,23 @@ describe("full-export — DB checkpoint lock", () => {
     if (dataDir) rmSync(dataDir, { recursive: true, force: true });
   });
 
-  it("coalesces concurrent checkpoint requests onto one exec sequence", async () => {
+  it("coalesces concurrent checkpoint requests onto one backup() call", async () => {
     dataDir = mkdtempSync(join(tmpdir(), "grafana-fe-"));
     const backupDir = join(dataDir, "grafana-data", ".signalk-backup");
     mkdirSync(backupDir, { recursive: true });
     const checkpointPath = join(backupDir, "grafana-backup.db");
-    writeFileSync(checkpointPath, "SQLite-pretend-bytes");
 
     let backupCalls = 0;
     let resolveBackup: () => void = () => {};
     const backupGate = new Promise<void>((r) => {
       resolveBackup = r;
     });
-    const exec: ExecFn = async (_name, cmd) => {
-      if (cmd.includes("mkdir") || cmd.includes("rm")) {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      if (cmd[0] === "sqlite3") {
-        backupCalls++;
-        // Hold the first call open until the second is queued so we
-        // can prove the lock coalesces them.
-        await backupGate;
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      return { exitCode: 0, stdout: "", stderr: "" };
+    const dbBackup: DbBackupFn = async (_src, dest) => {
+      backupCalls++;
+      // Hold the first call open until the second is queued so we
+      // can prove the lock coalesces them.
+      await backupGate;
+      writeFileSync(dest, "SQLite-pretend-bytes");
     };
 
     const res1 = fakeRes();
@@ -349,14 +331,8 @@ describe("full-export — DB checkpoint lock", () => {
     // synchronously before any `await`. Issuing both calls back-to-
     // back means `p2` sees the inflight promise `p1` created — no
     // sleep needed to "let it queue".
-    const p1 = handleDbExport(fakeReq(), res1, {
-      dataDir,
-      exec,
-    });
-    const p2 = handleDbExport(fakeReq(), res2, {
-      dataDir,
-      exec,
-    });
+    const p1 = handleDbExport(fakeReq(), res1, { dataDir, dbBackup });
+    const p2 = handleDbExport(fakeReq(), res2, { dataDir, dbBackup });
     resolveBackup();
     await Promise.all([p1, p2]);
 
@@ -365,32 +341,29 @@ describe("full-export — DB checkpoint lock", () => {
       1,
       "second concurrent request should reuse the inflight checkpoint",
     );
+    // Sanity-check that both responses still saw the file.
+    assert.equal(statSync(checkpointPath).isFile(), true);
   });
 
-  it("does not unlink the checkpoint file after streaming (next cycle's rm -f cleans up)", async () => {
+  it("does not unlink the checkpoint file after streaming (next cycle cleans up)", async () => {
     // Earlier versions of the handler unlinked the checkpoint in
     // `finally`, which created a race when concurrent requests
     // crossed a generation boundary. We now leave the file alone and
-    // rely on runCheckpoint's `rm -f` at the start of each export.
+    // rely on runCheckpoint's `unlink` at the start of each export.
     // Verify the file is still on disk after a successful export.
     dataDir = mkdtempSync(join(tmpdir(), "grafana-fe-"));
     const backupDir = join(dataDir, "grafana-data", ".signalk-backup");
     mkdirSync(backupDir, { recursive: true });
     const checkpointPath = join(backupDir, "grafana-backup.db");
-    writeFileSync(checkpointPath, "SQLite-pretend-bytes");
 
-    const exec: ExecFn = async () => ({ exitCode: 0, stdout: "", stderr: "" });
+    const dbBackup: DbBackupFn = async (_src, dest) => {
+      writeFileSync(dest, "SQLite-pretend-bytes");
+    };
     const res = fakeRes();
-    await handleDbExport(fakeReq(), res, { dataDir, exec });
+    await handleDbExport(fakeReq(), res, { dataDir, dbBackup });
 
     // pipeline finished — file should still exist.
     const st = statSync(checkpointPath);
     assert.equal(st.isFile(), true);
   });
-});
-
-const noopExec: ExecFn = async () => ({
-  exitCode: 0,
-  stdout: "",
-  stderr: "",
 });
