@@ -1,4 +1,4 @@
-import { describe, it, before, afterEach } from "node:test";
+import { describe, it, before, afterEach, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import {
   mkdirSync,
@@ -11,6 +11,7 @@ import {
 import { join } from "path";
 import { tmpdir } from "os";
 import { EventEmitter } from "events";
+import type { Response } from "express";
 import {
   _resetInflightForTesting,
   handleDashboardFile,
@@ -28,6 +29,9 @@ function fakeReq(params: Record<string, string> = {}): ExportRequest {
   return { params };
 }
 
+// Stand-in for express.Response that captures what the handlers do.
+// Declares the Writable surface (write/end) we need for `pipeline()`,
+// so we don't paper over missing methods with per-property casts.
 interface FakeRes extends EventEmitter {
   statusCode: number;
   headersSent: boolean;
@@ -38,9 +42,15 @@ interface FakeRes extends EventEmitter {
   json: (body: unknown) => void;
   setHeader: (name: string, value: string) => void;
   destroy: () => void;
+  write: (chunk: Buffer) => boolean;
+  end: () => void;
 }
 
-function fakeRes(): FakeRes {
+// The handlers accept express.Response; FakeRes implements only the
+// subset they touch (status / json / setHeader / destroy /
+// headersSent + the Writable surface). One cast at construction
+// keeps the test call-sites free of per-invocation casts.
+function fakeRes(): FakeRes & Response {
   const res = new EventEmitter() as FakeRes;
   res.statusCode = 200;
   res.headersSent = false;
@@ -60,19 +70,15 @@ function fakeRes(): FakeRes {
     res.destroyed = true;
   };
   // pipeline() pipes into a writable; emulate the writable surface.
-  (res as unknown as { write: (chunk: Buffer) => boolean }).write = (
-    chunk: Buffer,
-  ) => {
+  res.write = (chunk: Buffer) => {
     res.streamedChunks.push(chunk);
     res.headersSent = true;
     return true;
   };
-  (res as unknown as { end: () => void }).end = () => {
+  res.end = () => {
     res.emit("finish");
   };
-  // For `await pipeline(...)` to resolve, the writable needs `on()`
-  // (EventEmitter already gives us that) and `once('finish' / 'close')`.
-  return res;
+  return res as FakeRes & Response;
 }
 
 describe("full-export — dashboard manifest", () => {
@@ -84,7 +90,7 @@ describe("full-export — dashboard manifest", () => {
   it("returns empty list when dashboards dir is missing", async () => {
     dataDir = mkdtempSync(join(tmpdir(), "grafana-fe-"));
     const res = fakeRes();
-    await handleDashboardManifest(fakeReq(), res as never, {
+    await handleDashboardManifest(fakeReq(), res, {
       dataDir,
       exec: noopExec,
     });
@@ -101,7 +107,7 @@ describe("full-export — dashboard manifest", () => {
     );
 
     const res = fakeRes();
-    await handleDashboardManifest(fakeReq(), res as never, {
+    await handleDashboardManifest(fakeReq(), res, {
       dataDir,
       exec: noopExec,
     });
@@ -134,7 +140,7 @@ describe("full-export — dashboard manifest", () => {
     );
 
     const res = fakeRes();
-    await handleDashboardManifest(fakeReq(), res as never, {
+    await handleDashboardManifest(fakeReq(), res, {
       dataDir,
       exec: noopExec,
     });
@@ -153,22 +159,20 @@ describe("full-export — dashboard file", () => {
   it("rejects path traversal in :name", async () => {
     dataDir = mkdtempSync(join(tmpdir(), "grafana-fe-"));
     const res = fakeRes();
-    await handleDashboardFile(
-      fakeReq({ name: "../../../etc/passwd" }),
-      res as never,
-      { dataDir, exec: noopExec },
-    );
+    await handleDashboardFile(fakeReq({ name: "../../../etc/passwd" }), res, {
+      dataDir,
+      exec: noopExec,
+    });
     assert.equal(res.statusCode, 400);
   });
 
   it("rejects names with slashes", async () => {
     dataDir = mkdtempSync(join(tmpdir(), "grafana-fe-"));
     const res = fakeRes();
-    await handleDashboardFile(
-      fakeReq({ name: "subdir/foo.json" }),
-      res as never,
-      { dataDir, exec: noopExec },
-    );
+    await handleDashboardFile(fakeReq({ name: "subdir/foo.json" }), res, {
+      dataDir,
+      exec: noopExec,
+    });
     assert.equal(res.statusCode, 400);
   });
 
@@ -179,7 +183,7 @@ describe("full-export — dashboard file", () => {
     dataDir = mkdtempSync(join(tmpdir(), "grafana-fe-"));
     for (const name of [".", ".."]) {
       const res = fakeRes();
-      await handleDashboardFile(fakeReq({ name }), res as never, {
+      await handleDashboardFile(fakeReq({ name }), res, {
         dataDir,
         exec: noopExec,
       });
@@ -187,7 +191,7 @@ describe("full-export — dashboard file", () => {
     }
   });
 
-  it("rejects symlinks even when their name passes validation", async () => {
+  it("rejects symlinks even when their name passes validation", async (t: TestContext) => {
     // Defense in depth: safeJoin only verifies lexical containment, so
     // a symlink at <dashboards>/evil.json pointing outside the root
     // would otherwise be served via createReadStream.
@@ -198,13 +202,15 @@ describe("full-export — dashboard file", () => {
     try {
       symlinkSync(targetPath, join(dataDir, "dashboards", "evil.json"));
     } catch {
-      // Some test environments (Windows runner) don't permit symlinks
-      // — skip the assertion in that case.
+      // Some test environments (Windows runner) don't permit symlinks.
+      // Mark the test as skipped so the report distinguishes "covered"
+      // from "ran" — silently returning would look like a pass.
+      t.skip("symlinks not supported on this platform");
       return;
     }
 
     const res = fakeRes();
-    await handleDashboardFile(fakeReq({ name: "evil.json" }), res as never, {
+    await handleDashboardFile(fakeReq({ name: "evil.json" }), res, {
       dataDir,
       exec: noopExec,
     });
@@ -216,7 +222,7 @@ describe("full-export — dashboard file", () => {
     dataDir = mkdtempSync(join(tmpdir(), "grafana-fe-"));
     mkdirSync(join(dataDir, "dashboards"));
     const res = fakeRes();
-    await handleDashboardFile(fakeReq({ name: "missing.json" }), res as never, {
+    await handleDashboardFile(fakeReq({ name: "missing.json" }), res, {
       dataDir,
       exec: noopExec,
     });
@@ -246,7 +252,7 @@ describe("full-export — provisioning", () => {
     );
 
     const res = fakeRes();
-    await handleProvisioningManifest(fakeReq(), res as never, {
+    await handleProvisioningManifest(fakeReq(), res, {
       dataDir,
       exec: noopExec,
     });
@@ -262,7 +268,7 @@ describe("full-export — provisioning", () => {
     const res = fakeRes();
     await handleProvisioningFile(
       fakeReq({ relPath: encodeURIComponent("../etc/passwd") }),
-      res as never,
+      res,
       { dataDir, exec: noopExec },
     );
     assert.equal(res.statusCode, 400);
@@ -273,7 +279,7 @@ describe("full-export — provisioning", () => {
     const res = fakeRes();
     await handleProvisioningFile(
       fakeReq({ relPath: encodeURIComponent("./datasources/x.yaml") }),
-      res as never,
+      res,
       { dataDir, exec: noopExec },
     );
     assert.equal(res.statusCode, 400);
@@ -295,7 +301,7 @@ describe("full-export — provisioning", () => {
       fakeReq({
         relPath: encodeURIComponent("datasources/ok.yaml"),
       }),
-      res as never,
+      res,
       { dataDir, exec: noopExec },
     );
     const streamed = Buffer.concat(res.streamedChunks).toString("utf-8");
@@ -343,11 +349,11 @@ describe("full-export — DB checkpoint lock", () => {
     // synchronously before any `await`. Issuing both calls back-to-
     // back means `p2` sees the inflight promise `p1` created — no
     // sleep needed to "let it queue".
-    const p1 = handleDbExport(fakeReq(), res1 as never, {
+    const p1 = handleDbExport(fakeReq(), res1, {
       dataDir,
       exec,
     });
-    const p2 = handleDbExport(fakeReq(), res2 as never, {
+    const p2 = handleDbExport(fakeReq(), res2, {
       dataDir,
       exec,
     });
@@ -375,7 +381,7 @@ describe("full-export — DB checkpoint lock", () => {
 
     const exec: ExecFn = async () => ({ exitCode: 0, stdout: "", stderr: "" });
     const res = fakeRes();
-    await handleDbExport(fakeReq(), res as never, { dataDir, exec });
+    await handleDbExport(fakeReq(), res, { dataDir, exec });
 
     // pipeline finished — file should still exist.
     const st = statSync(checkpointPath);
