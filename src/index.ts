@@ -2,6 +2,13 @@ import { readFileSync, writeFileSync } from "fs";
 import { IRouter } from "express";
 import { Config, ConfigSchema } from "./config/schema";
 import { generateProvisioning } from "./provisioning";
+import {
+  handleDashboardFile,
+  handleDashboardManifest,
+  handleDbExport,
+  handleProvisioningFile,
+  handleProvisioningManifest,
+} from "./full-export";
 
 interface App {
   debug: (...args: unknown[]) => void;
@@ -483,6 +490,68 @@ module.exports = (app: App) => {
             error: err instanceof Error ? err.message : "Unknown error",
           });
         }
+      });
+
+      // Full-export endpoints used by signalk-backup to pull a
+      // consistent snapshot of Grafana state for inclusion in its
+      // kopia snapshot. See src/full-export.ts.
+      const exportDeps = () => {
+        const containers = (globalThis as any).__signalk_containerManager as
+          | ContainerManagerApi
+          | undefined;
+        if (!containers || !containers.getRuntime()) return null;
+        return {
+          dataDir: app.getDataDirPath(),
+          exec: containers.execInContainer,
+          log: (msg: string) => {
+            app.debug(`full-export: ${msg}`);
+          },
+        };
+      };
+
+      router.get("/api/full-export/db", async (req, res) => {
+        const deps = exportDeps();
+        if (!deps) {
+          res.status(503).json({ error: "Container manager not available" });
+          return;
+        }
+        await handleDbExport(req, res, deps);
+      });
+
+      router.get("/api/full-export/dashboards", async (req, res) => {
+        const deps = exportDeps();
+        if (!deps) {
+          res.status(503).json({ error: "Container manager not available" });
+          return;
+        }
+        await handleDashboardManifest(req, res, deps);
+      });
+
+      router.get("/api/full-export/dashboards/:name", async (req, res) => {
+        const deps = exportDeps();
+        if (!deps) {
+          res.status(503).json({ error: "Container manager not available" });
+          return;
+        }
+        await handleDashboardFile(req, res, deps);
+      });
+
+      router.get("/api/full-export/provisioning", async (req, res) => {
+        const deps = exportDeps();
+        if (!deps) {
+          res.status(503).json({ error: "Container manager not available" });
+          return;
+        }
+        await handleProvisioningManifest(req, res, deps);
+      });
+
+      router.get("/api/full-export/provisioning/:relPath", async (req, res) => {
+        const deps = exportDeps();
+        if (!deps) {
+          res.status(503).json({ error: "Container manager not available" });
+          return;
+        }
+        await handleProvisioningFile(req, res, deps);
       });
 
       router.post("/api/set-password", async (req, res) => {
