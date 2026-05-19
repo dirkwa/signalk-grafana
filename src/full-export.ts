@@ -1,9 +1,10 @@
 import type { Response } from "express";
 import { createReadStream } from "fs";
-import { lstat, readdir, stat } from "fs/promises";
+import { lstat, mkdir, readdir, stat, unlink } from "fs/promises";
 import { createHash } from "crypto";
 import { join, normalize, relative, sep } from "path";
 import { pipeline } from "stream/promises";
+import { DatabaseSync, backup } from "node:sqlite";
 
 // Narrow request shape — handlers read only `req.params`. Typing it
 // this way lets tests pass plain `{ params: {...} }` objects without
@@ -17,18 +18,17 @@ export interface ExportRequest {
 // dashboard JSONs and provisioning YAMLs. Mirrors the signalk-questdb
 // export pattern so signalk-backup can treat both plugins uniformly.
 
-const CONTAINER_NAME = "signalk-grafana";
 // `/var/lib/grafana` is bind-mounted to `<dataDir>/grafana-data` (see
-// src/index.ts where the container config is built). Writing the
-// checkpoint inside this dir lets us read it on the host without
-// piping the file through `cat | base64` over `exec`.
-const CHECKPOINT_DIR_IN_CONTAINER = "/var/lib/grafana/.signalk-backup";
+// src/index.ts where the container config is built). Both the live DB
+// and the checkpoint live under that subtree so the plugin can reach
+// them with plain fs APIs.
+const GRAFANA_DATA_SUBDIR = "grafana-data";
+const CHECKPOINT_SUBDIR = ".signalk-backup";
 const CHECKPOINT_FILE = "grafana-backup.db";
-// Path inside the dataDir hierarchy on the host. Resolved at call
-// time because dataDir is plugin-instance-scoped.
+const GRAFANA_DB_FILENAME = "grafana.db";
 const CHECKPOINT_HOST_SUBPATH = join(
-  "grafana-data",
-  ".signalk-backup",
+  GRAFANA_DATA_SUBDIR,
+  CHECKPOINT_SUBDIR,
   CHECKPOINT_FILE,
 );
 
@@ -44,15 +44,17 @@ const PROVISIONING_SUBDIR = "provisioning";
 // disallow anything that could escape the directory or hide intent.
 const SAFE_FILENAME = /^[a-zA-Z0-9._-]+$/;
 
-export type ExecFn = (
-  name: string,
-  command: string[],
-) => Promise<{ exitCode: number; stdout: string; stderr: string }>;
+// Online-backup hook. Defaults to node:sqlite's `backup()` against the
+// bind-mounted grafana.db; tests inject a gated stub to exercise the
+// coalesce/race logic without touching disk.
+export type DbBackupFn = (
+  sourcePath: string,
+  destPath: string,
+) => Promise<void>;
 
 export interface FullExportDeps {
   dataDir: string;
-  containerName?: string;
-  exec: ExecFn;
+  dbBackup?: DbBackupFn;
   log?: (msg: string) => void;
 }
 
@@ -97,31 +99,42 @@ function safeJoin(root: string, ...parts: string[]): string {
   return candidate;
 }
 
-async function runCheckpoint(deps: FullExportDeps): Promise<string> {
-  const containerName = deps.containerName ?? CONTAINER_NAME;
-  const log = deps.log ?? defaultLog;
-  const hostPath = join(deps.dataDir, CHECKPOINT_HOST_SUBPATH);
-  const containerPath = `${CHECKPOINT_DIR_IN_CONTAINER}/${CHECKPOINT_FILE}`;
-
-  await deps.exec(containerName, ["mkdir", "-p", CHECKPOINT_DIR_IN_CONTAINER]);
-  // Drop any previous checkpoint first — `sqlite3 .backup` overwrites,
-  // but leaving stale bytes around on failure would mask the error.
-  await deps.exec(containerName, ["rm", "-f", containerPath]);
-
-  const result = await deps.exec(containerName, [
-    "sqlite3",
-    "/var/lib/grafana/grafana.db",
-    `.backup ${containerPath}`,
-  ]);
-  if (result.exitCode !== 0) {
-    throw new Error(
-      `sqlite3 .backup failed (exit ${result.exitCode}): ${result.stderr.trim() || result.stdout.trim()}`,
-    );
+async function defaultDbBackup(
+  sourcePath: string,
+  destPath: string,
+): Promise<void> {
+  const src = new DatabaseSync(sourcePath, { readOnly: true });
+  try {
+    await backup(src, destPath);
+  } finally {
+    src.close();
   }
+}
 
-  // Confirm the checkpoint file is reachable on the host. If the bind
-  // mount isn't shaped as we expect, this is where we'll catch it
-  // before streaming a 0-byte file.
+async function runCheckpoint(deps: FullExportDeps): Promise<string> {
+  const log = deps.log ?? defaultLog;
+  const sourcePath = join(
+    deps.dataDir,
+    GRAFANA_DATA_SUBDIR,
+    GRAFANA_DB_FILENAME,
+  );
+  const hostPath = join(deps.dataDir, CHECKPOINT_HOST_SUBPATH);
+  const dbBackup = deps.dbBackup ?? defaultDbBackup;
+
+  await mkdir(join(deps.dataDir, GRAFANA_DATA_SUBDIR, CHECKPOINT_SUBDIR), {
+    recursive: true,
+  });
+  // Drop any previous checkpoint first — node:sqlite backup() overwrites
+  // an existing file, but leaving stale bytes around on failure would
+  // mask the error.
+  await unlink(hostPath).catch(() => {});
+
+  await dbBackup(sourcePath, hostPath);
+
+  // Sanity-check the checkpoint is a real SQLite file before we stream
+  // it. A 0-byte file shouldn't be possible with node:sqlite backup()
+  // succeeding, but cheap to verify and gives a clearer error than the
+  // client seeing a truncated body.
   const st = await stat(hostPath);
   if (st.size === 0) {
     throw new Error(`checkpoint produced an empty file at ${hostPath}`);
@@ -185,7 +198,7 @@ export async function handleDbExport(
 // Generation-unique filenames would also work but add plumbing.
 //
 // Instead we rely on `runCheckpoint` clearing the file at the start
-// of every export via `rm -f` (line ~109). The leftover sits under
+// of every export via `unlink`. The leftover sits under
 // `<dataDir>/grafana-data/.signalk-backup/grafana-backup.db` — a
 // hidden subdir of an already-private bind mount, ~MB scale, owned
 // by the SignalK user — until the next scheduled export overwrites
