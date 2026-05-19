@@ -1,6 +1,6 @@
 import type { Response } from "express";
 import { createReadStream } from "fs";
-import { readdir, stat, unlink } from "fs/promises";
+import { lstat, readdir, stat } from "fs/promises";
 import { createHash } from "crypto";
 import { join, normalize, relative, sep } from "path";
 import { pipeline } from "stream/promises";
@@ -154,7 +154,7 @@ export async function handleDbExport(
       500,
       err instanceof Error ? err.message : "checkpoint failed",
     );
-    await releaseReader(null);
+    await releaseReader();
     return;
   }
 
@@ -168,21 +168,32 @@ export async function handleDbExport(
     // Response is already in-flight; can't change status. The client
     // sees a truncated body and treats it as a failed download.
   } finally {
-    await releaseReader(hostPath);
+    await releaseReader();
   }
 }
 
 // Drop the in-flight reader count by one; when the last reader leaves,
 // clear the inflight slot so the next request triggers a fresh
-// checkpoint and unlink the checkpoint file if we have one. Cleanup
-// is best-effort — a leftover file under .signalk-backup/ is harmless
-// (next export's `rm -f` clears it) and we never want to surface an
-// unlink error to a successfully-streamed response.
-async function releaseReader(hostPath: string | null): Promise<void> {
+// checkpoint.
+//
+// We deliberately do NOT unlink the checkpoint file here. The previous
+// version did, and CR caught the race: clearing `inflightDbExport`
+// before `await unlink` lets a new request start a fresh checkpoint
+// at the same hostPath, and the still-pending unlink from the old
+// generation can then delete the new file out from under it.
+// Reversing the order doesn't help either (it just shifts the race).
+// Generation-unique filenames would also work but add plumbing.
+//
+// Instead we rely on `runCheckpoint` clearing the file at the start
+// of every export via `rm -f` (line ~109). The leftover sits under
+// `<dataDir>/grafana-data/.signalk-backup/grafana-backup.db` — a
+// hidden subdir of an already-private bind mount, ~MB scale, owned
+// by the SignalK user — until the next scheduled export overwrites
+// it. Worst-case crash-before-next-export leaves one stale file there.
+async function releaseReader(): Promise<void> {
   inflightReaders--;
   if (inflightReaders > 0) return;
   inflightDbExport = null;
-  if (hostPath) await unlink(hostPath).catch(() => undefined);
 }
 
 interface ManifestEntry {
@@ -212,7 +223,13 @@ async function buildManifest(
     for (const entry of entries) {
       const full = join(dir, entry.name);
       if (entry.isDirectory()) {
-        await walk(full);
+        // Skip subdirectories entirely in flat mode (dashboards). Without
+        // this, a nested file would be advertised in the manifest by its
+        // basename only — but `/dashboards/:name` only accepts a single
+        // segment, so the client couldn't fetch it. Recursive walks stay
+        // enabled for provisioning where the per-file endpoint accepts
+        // an encoded relPath.
+        if (keepRelPath) await walk(full);
         continue;
       }
       if (!entry.isFile()) continue;
@@ -273,7 +290,15 @@ export async function handleDashboardFile(
   try {
     const root = join(deps.dataDir, DASHBOARDS_SUBDIR);
     const filePath = safeJoin(root, name);
-    const st = await stat(filePath);
+    // lstat (not stat) so we see the symlink itself rather than its
+    // target. Refusing symlinks closes the "plant a symlink inside
+    // /dashboards pointing to /etc/passwd" hole — safeJoin only does
+    // lexical containment so it can't detect that on its own.
+    const st = await lstat(filePath);
+    if (st.isSymbolicLink()) {
+      sendError(res, 400, "symlink rejected");
+      return;
+    }
     if (!st.isFile()) {
       sendError(res, 404, "not a file");
       return;
@@ -341,7 +366,12 @@ export async function handleProvisioningFile(
   try {
     const root = join(deps.dataDir, PROVISIONING_SUBDIR);
     const filePath = safeJoin(root, ...segments);
-    const st = await stat(filePath);
+    // Same lstat-rejects-symlinks hardening as the dashboard handler.
+    const st = await lstat(filePath);
+    if (st.isSymbolicLink()) {
+      sendError(res, 400, "symlink rejected");
+      return;
+    }
     if (!st.isFile()) {
       sendError(res, 404, "not a file");
       return;

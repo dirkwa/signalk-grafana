@@ -1,6 +1,13 @@
 import { describe, it, before, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { EventEmitter } from "events";
@@ -112,6 +119,29 @@ describe("full-export — dashboard manifest", () => {
       undefined,
     );
   });
+
+  it("skips nested dashboard files (flat manifest, flat fetch route)", async () => {
+    // Without this guard the manifest would advertise a nested file by
+    // its basename, but /dashboards/:name only accepts a single
+    // segment so the client would 404 trying to fetch it. Skip the
+    // subdir entirely.
+    dataDir = mkdtempSync(join(tmpdir(), "grafana-fe-"));
+    mkdirSync(join(dataDir, "dashboards", "archived"), { recursive: true });
+    writeFileSync(join(dataDir, "dashboards", "top.json"), "{}");
+    writeFileSync(
+      join(dataDir, "dashboards", "archived", "old.json"),
+      '{"old": true}',
+    );
+
+    const res = fakeRes();
+    await handleDashboardManifest(fakeReq(), res as never, {
+      dataDir,
+      exec: noopExec,
+    });
+    const body = res.jsonBody as { dashboards: Array<Record<string, unknown>> };
+    assert.equal(body.dashboards.length, 1);
+    assert.equal(body.dashboards[0].name, "top.json");
+  });
 });
 
 describe("full-export — dashboard file", () => {
@@ -155,6 +185,31 @@ describe("full-export — dashboard file", () => {
       });
       assert.equal(res.statusCode, 400, `expected 400 for name="${name}"`);
     }
+  });
+
+  it("rejects symlinks even when their name passes validation", async () => {
+    // Defense in depth: safeJoin only verifies lexical containment, so
+    // a symlink at <dashboards>/evil.json pointing outside the root
+    // would otherwise be served via createReadStream.
+    dataDir = mkdtempSync(join(tmpdir(), "grafana-fe-"));
+    mkdirSync(join(dataDir, "dashboards"));
+    const targetPath = join(tmpdir(), "grafana-fe-symlink-target");
+    writeFileSync(targetPath, "secret content");
+    try {
+      symlinkSync(targetPath, join(dataDir, "dashboards", "evil.json"));
+    } catch {
+      // Some test environments (Windows runner) don't permit symlinks
+      // — skip the assertion in that case.
+      return;
+    }
+
+    const res = fakeRes();
+    await handleDashboardFile(fakeReq({ name: "evil.json" }), res as never, {
+      dataDir,
+      exec: noopExec,
+    });
+    rmSync(targetPath, { force: true });
+    assert.equal(res.statusCode, 400);
   });
 
   it("404s on a missing file even with safe name", async () => {
@@ -304,6 +359,27 @@ describe("full-export — DB checkpoint lock", () => {
       1,
       "second concurrent request should reuse the inflight checkpoint",
     );
+  });
+
+  it("does not unlink the checkpoint file after streaming (next cycle's rm -f cleans up)", async () => {
+    // Earlier versions of the handler unlinked the checkpoint in
+    // `finally`, which created a race when concurrent requests
+    // crossed a generation boundary. We now leave the file alone and
+    // rely on runCheckpoint's `rm -f` at the start of each export.
+    // Verify the file is still on disk after a successful export.
+    dataDir = mkdtempSync(join(tmpdir(), "grafana-fe-"));
+    const backupDir = join(dataDir, "grafana-data", ".signalk-backup");
+    mkdirSync(backupDir, { recursive: true });
+    const checkpointPath = join(backupDir, "grafana-backup.db");
+    writeFileSync(checkpointPath, "SQLite-pretend-bytes");
+
+    const exec: ExecFn = async () => ({ exitCode: 0, stdout: "", stderr: "" });
+    const res = fakeRes();
+    await handleDbExport(fakeReq(), res as never, { dataDir, exec });
+
+    // pipeline finished — file should still exist.
+    const st = statSync(checkpointPath);
+    assert.equal(st.isFile(), true);
   });
 });
 
