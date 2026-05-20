@@ -15,6 +15,7 @@ Runs Grafana in a container (via [signalk-container](https://github.com/dirkwa/s
 - **One-click update** -- check for new Grafana versions and update from the config panel
 - **Password management** -- set admin password from Signal K config panel
 - **Config panel** -- Grafana status with direct link, settings, all in Admin UI
+- **Backup & restore integration** -- exposes `/api/full-export/{db,dashboards,provisioning}` endpoints for [signalk-backup](https://github.com/dirkwa/signalk-backup) to pull a consistent SQLite checkpoint plus dashboard JSONs and provisioning YAMLs. On plugin start, if a kopia restore left a staged `grafana.db` on disk but the live one is missing, it's automatically copied into place before Grafana starts -- dashboards and datasources come back without any manual step.
 
 ## How It Works
 
@@ -127,7 +128,7 @@ QuestDB's `SAMPLE BY` handles time bucketing (e.g., `SAMPLE BY 10s`, `SAMPLE BY 
 
 ## Requirements
 
-- Node.js >= 22
+- Node.js >= 22.16 (needs `node:sqlite` `backup()` for the SQLite checkpoint endpoint)
 - [signalk-container](https://github.com/dirkwa/signalk-container) plugin
 - [signalk-questdb](https://github.com/dirkwa/signalk-questdb) plugin (with network set to `sk-network`)
 - Signal K server
