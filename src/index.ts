@@ -70,9 +70,8 @@ module.exports = (app: App) => {
     app.setPluginStatus("Ensuring container network...");
     await containers.ensureNetwork(config.networkName);
 
-    // Must run before grafana starts: the container opens grafana.db on
-    // boot and any later restore-into-place wouldn't be seen until the
-    // next container recreate.
+    // Must run before Grafana starts: container opens grafana.db on boot.
+    // Any later restore-into-place wouldn't be seen until the next recreate.
     try {
       await rehydrateFromBackup({ dataDir, log: (msg) => app.debug(msg) });
     } catch (err) {
