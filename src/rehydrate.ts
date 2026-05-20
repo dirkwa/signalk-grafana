@@ -19,22 +19,12 @@ export interface RehydrateDeps {
   log?: (msg: string) => void;
 }
 
-/**
- * If signalk-backup's restore left a staged grafana.db on disk but the
- * live one is missing, copy it into place. Idempotent — safe to call
- * on every plugin start.
- *
- * Returns true if a copy happened, false if nothing was needed.
- */
 export async function rehydrateFromBackup(
   deps: RehydrateDeps,
 ): Promise<boolean> {
   const log =
     deps.log ?? ((msg: string) => console.error(`[rehydrate] ${msg}`));
 
-  // dataDir is `<configRoot>/plugin-config-data/signalk-grafana`. Sibling
-  // signalk-backup directory lives at `<configRoot>/plugin-config-data/
-  // signalk-backup`. Two levels up + sibling.
   const pluginConfigData = dirname(deps.dataDir);
   const stagedDb = join(
     pluginConfigData,

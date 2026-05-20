@@ -70,9 +70,9 @@ module.exports = (app: App) => {
     app.setPluginStatus("Ensuring container network...");
     await containers.ensureNetwork(config.networkName);
 
-    // Rehydrate from a signalk-backup restore before grafana starts.
-    // No-op when not restoring; only copies when staged backup exists
-    // and the live DB is missing.
+    // Must run before grafana starts: the container opens grafana.db on
+    // boot and any later restore-into-place wouldn't be seen until the
+    // next container recreate.
     try {
       await rehydrateFromBackup({ dataDir, log: (msg) => app.debug(msg) });
     } catch (err) {
