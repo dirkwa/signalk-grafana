@@ -9,6 +9,7 @@ import {
   handleProvisioningFile,
   handleProvisioningManifest,
 } from "./full-export";
+import { rehydrateFromBackup } from "./rehydrate";
 
 interface App {
   debug: (...args: unknown[]) => void;
@@ -68,6 +69,17 @@ module.exports = (app: App) => {
 
     app.setPluginStatus("Ensuring container network...");
     await containers.ensureNetwork(config.networkName);
+
+    // Rehydrate from a signalk-backup restore before grafana starts.
+    // No-op when not restoring; only copies when staged backup exists
+    // and the live DB is missing.
+    try {
+      await rehydrateFromBackup({ dataDir, log: (msg) => app.debug(msg) });
+    } catch (err) {
+      app.error(
+        `Rehydrate from backup failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
 
     app.setPluginStatus("Generating Grafana provisioning...");
     generateProvisioning(dataDir, config);
