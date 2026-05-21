@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync } from "fs";
+import path from "node:path";
 import { IRouter } from "express";
 import { Config, ConfigSchema } from "./config/schema";
 import { generateProvisioning } from "./provisioning";
@@ -40,6 +41,26 @@ interface ContainerManagerApi {
     containerName: string,
     networkName: string,
   ) => Promise<void>;
+  // WHY: optional to support older signalk-container versions without this method.
+  resolveHostPath?: (
+    absPath: string,
+  ) => Promise<{ source: string; subPath: string } | null>;
+}
+
+// WHY: in-container SK needs signalk-container to translate the plugin path to a host-visible bind source; fall back to the in-container path on any failure so bare-metal and older signalk-container keep working.
+async function resolveVolumeSource(
+  containers: ContainerManagerApi | undefined,
+  absPath: string,
+): Promise<string> {
+  if (!containers || typeof containers.resolveHostPath !== "function")
+    return absPath;
+  try {
+    const resolved = await containers.resolveHostPath(absPath);
+    // WHY: join source + subPath to handle parent-directory mounts (subPath is "" for exact-match mounts).
+    return resolved ? path.join(resolved.source, resolved.subPath) : absPath;
+  } catch {
+    return absPath;
+  }
 }
 
 module.exports = (app: App) => {
@@ -100,6 +121,15 @@ module.exports = (app: App) => {
     }
 
     const bind = config.bindToAllInterfaces ? "0.0.0.0" : "127.0.0.1";
+    // WHY: app.getDataDirPath() is SK-container-internal when SK runs in a container; the runtime daemon needs the host source.
+    const provisioningSrc = await resolveVolumeSource(
+      containers,
+      `${dataDir}/provisioning`,
+    );
+    const grafanaDataSrc = await resolveVolumeSource(
+      containers,
+      `${dataDir}/grafana-data`,
+    );
     const containerConfig = {
       image: "grafana/grafana",
       tag: config.grafanaVersion ?? "latest",
@@ -108,8 +138,8 @@ module.exports = (app: App) => {
       },
       networkMode: config.networkName,
       volumes: {
-        "/etc/grafana/provisioning": `${dataDir}/provisioning`,
-        "/var/lib/grafana": `${dataDir}/grafana-data`,
+        "/etc/grafana/provisioning": provisioningSrc,
+        "/var/lib/grafana": grafanaDataSrc,
       },
       env: {
         GF_SECURITY_ADMIN_PASSWORD: config.adminPassword ?? "admin",
@@ -453,6 +483,15 @@ module.exports = (app: App) => {
           await containers.remove("signalk-grafana");
 
           app.setPluginStatus(`Starting Grafana ${newTag}...`);
+          // WHY: app.getDataDirPath() is SK-container-internal when SK runs in a container; the runtime daemon needs the host source.
+          const provisioningSrc = await resolveVolumeSource(
+            containers,
+            `${app.getDataDirPath()}/provisioning`,
+          );
+          const grafanaDataSrc = await resolveVolumeSource(
+            containers,
+            `${app.getDataDirPath()}/grafana-data`,
+          );
           await containers.ensureRunning("signalk-grafana", {
             image: "grafana/grafana",
             tag: newTag,
@@ -461,8 +500,8 @@ module.exports = (app: App) => {
             },
             networkMode: currentConfig?.networkName ?? "sk-network",
             volumes: {
-              "/etc/grafana/provisioning": `${app.getDataDirPath()}/provisioning`,
-              "/var/lib/grafana": `${app.getDataDirPath()}/grafana-data`,
+              "/etc/grafana/provisioning": provisioningSrc,
+              "/var/lib/grafana": grafanaDataSrc,
             },
             env: {
               GF_SECURITY_ADMIN_PASSWORD:
