@@ -45,6 +45,23 @@ interface ContainerManagerApi {
   resolveHostPath?: (
     absPath: string,
   ) => Promise<{ source: string; subPath: string } | null>;
+  // WHY: doctor surface exists from signalk-container 1.4+; mirror only the fields we read.
+  doctor?: {
+    selfDeployment: () => Promise<{ isContainerized: boolean }>;
+  };
+}
+
+// WHY: returns false on any failure so we don't accidentally skip the permission fix on bare-metal SK when the doctor surface is missing or throws.
+async function isContainerizedSignalK(
+  containers: ContainerManagerApi,
+): Promise<boolean> {
+  if (!containers.doctor) return false;
+  try {
+    const result = await containers.doctor.selfDeployment();
+    return result.isContainerized === true;
+  } catch {
+    return false;
+  }
 }
 
 // WHY: in-container SK needs signalk-container to translate the plugin path to a host-visible bind source; fall back to the in-container path on any failure so bare-metal and older signalk-container keep working.
@@ -106,14 +123,21 @@ module.exports = (app: App) => {
 
     // Fix permissions on grafana-data from previous runs with different UID mappings.
     // podman unshare enters the user namespace where the mapped UIDs are accessible.
+    // WHY skip when SK is containerized: (1) the dataDir is the in-container path which
+    // podman on the host can't reach anyway, and (2) the SK container's bundled podman
+    // client talks to the host daemon over a Unix socket; `podman unshare` is not
+    // supported by the remote client and writes a "cannot use command 'podman unshare'
+    // with the remote podman client" line to stderr before failing.
     const runtime = containers.getRuntime();
-    if (runtime && runtime.runtime === "podman") {
+    const skContainerized = await isContainerizedSignalK(containers);
+    if (runtime && runtime.runtime === "podman" && !skContainerized) {
       try {
         const { execFileSync } = await import("child_process");
+        // stdio 'ignore' silences any unshare-not-supported messages on stderr.
         execFileSync(
           "podman",
           ["unshare", "chmod", "-R", "a+rwX", `${dataDir}/grafana-data`],
-          { timeout: 15000 },
+          { timeout: 15000, stdio: "ignore" },
         );
       } catch {
         app.debug("could not fix grafana-data permissions via podman unshare");
