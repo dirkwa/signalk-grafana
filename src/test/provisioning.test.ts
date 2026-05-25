@@ -16,6 +16,7 @@ const defaultConfig = {
   signalkUrl: "",
   subPath: "",
   bindToAllInterfaces: false,
+  requestSignalkToken: true,
 };
 
 describe("generateProvisioning", () => {
@@ -134,5 +135,60 @@ describe("generateProvisioning", () => {
       "utf8",
     );
     assert.ok(content.includes("sk-my-questdb:9999"));
+  });
+
+  it("omits useAuth=true and secureJsonData when no token is supplied", () => {
+    // Unsecured SK / user opted out — datasource hits the noauth route in
+    // tkurki-signalk-datasource and SK serves anonymously.
+    tempDir = mkdtempSync(join(tmpdir(), "grafana-test-"));
+    generateProvisioning(tempDir, defaultConfig);
+
+    const content = readFileSync(
+      join(tempDir, "provisioning/datasources/signalk.yaml"),
+      "utf8",
+    );
+    assert.ok(content.includes("useAuth: false"));
+    assert.ok(
+      !content.includes("secureJsonData"),
+      "should not write secureJsonData when no token",
+    );
+    assert.ok(
+      !content.includes("token:"),
+      "should not write any token line when no token",
+    );
+  });
+
+  it("injects useAuth=true and secureJsonData.token when a token is supplied", () => {
+    // Secured SK path — the tkurki datasource sees useAuth=true and
+    // routes to the authed HTTP route, picking the bearer token out
+    // of secureJsonData server-side and forwarding it to SK.
+    tempDir = mkdtempSync(join(tmpdir(), "grafana-test-"));
+    const jwt =
+      "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJzaWduYWxrLWdyYWZhbmEifQ.abcDEF_123-456";
+    generateProvisioning(tempDir, defaultConfig, jwt);
+
+    const content = readFileSync(
+      join(tempDir, "provisioning/datasources/signalk.yaml"),
+      "utf8",
+    );
+    assert.ok(content.includes("useAuth: true"));
+    assert.ok(content.includes("secureJsonData:"));
+    assert.ok(content.includes(`token: ${jwt}`));
+  });
+
+  it("rejects tokens that don't match the JWT shape", () => {
+    // The YAML is built as a string template; refusing malformed input
+    // at this layer protects against future yaml-injection if a caller
+    // ever passes user input through unchecked.
+    tempDir = mkdtempSync(join(tmpdir(), "grafana-test-"));
+    assert.throws(
+      () =>
+        generateProvisioning(
+          tempDir,
+          defaultConfig,
+          "not a jwt\ninjected: yes",
+        ),
+      /does not match the expected JWT shape/,
+    );
   });
 });

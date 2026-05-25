@@ -125,6 +125,20 @@ QuestDB's `SAMPLE BY` handles time bucketing (e.g., `SAMPLE BY 10s`, `SAMPLE BY 
 | Network name          | `sk-network`      | Shared container network name                                |
 | Bind to 0.0.0.0       | `false`           | Expose Grafana outside localhost                             |
 | Sub-path              | empty             | Set to `/grafana/` when running behind a reverse proxy       |
+| Auto-request token    | `true`            | On secured Signal K servers, request a device-access token   |
+
+### Secured Signal K servers
+
+When Signal K security is enabled, the plugin drives the standard SK device-access-request flow on startup so the Grafana Signal K datasource can read paths and history from the secured server.
+
+1. Plugin POSTs `/signalk/v1/access/requests` with `clientId: signalk-grafana`, `permissions: readwrite`.
+2. Plugin status shows `Awaiting Signal K token approval — see Security → Access Requests`.
+3. Approve in Signal K Admin → Security → Access Requests.
+4. The plugin caches the JWT to `${dataDir}/signalk-token` (mode 0600), injects it into the Grafana datasource provisioning, and recreates the Grafana container so the new credentials take effect.
+
+Disable with `requestSignalkToken: false` if you prefer to paste a token into the Grafana datasource UI manually.
+
+**Known limitation:** streaming queries on secured servers do not authenticate today. The `tkurki-signalk-datasource` plugin opens its WebSocket from the browser where the secret token is not accessible by design. Explore queries and historical-range panels work; live-updating panels on secured servers do not until the upstream datasource plugin gains WS auth support.
 
 ## Requirements
 
