@@ -138,7 +138,16 @@ When Signal K security is enabled, the plugin drives the standard SK device-acce
 
 Disable with `requestSignalkToken: false` if you prefer to paste a token into the Grafana datasource UI manually.
 
-**Known limitation:** streaming queries on secured servers do not authenticate today. The `tkurki-signalk-datasource` plugin opens its WebSocket from the browser where the secret token is not accessible by design. Explore queries and historical-range panels work; live-updating panels on secured servers do not until the upstream datasource plugin gains WS auth support.
+#### What works and what doesn't on secured SK
+
+| Use case                                                                           | Works on secured SK? |
+| ---------------------------------------------------------------------------------- | -------------------- |
+| Explore → Signal K → pick a path                                                   | ✅                   |
+| Historical range queries (`from`/`to` are explicit times, or `now-1h` to `now-1m`) | ✅                   |
+| `/api/health` and datasource Test button                                           | ✅                   |
+| **Live-updating panels** (range `now-X to now` that streams values in real time)   | ❌                   |
+
+The live-update gap is in the upstream `tkurki-signalk-datasource` plugin: it opens its WebSocket from the browser where Grafana's secret store is not accessible by design, so the upgrade request goes out without an `Authorization` header and Signal K rejects it. HTTP queries are unaffected because Grafana's datasource proxy injects the bearer token server-side for those. Tracked at [tkurki/signalk-grafana-datasource#12](https://github.com/tkurki/signalk-grafana-datasource/issues/12) — until that lands, **use the QuestDB datasource for live-updating panels** (the intended architecture: SK → questdb → Grafana, with the SK datasource reserved for ad-hoc Explore and historical queries).
 
 ## Requirements
 
