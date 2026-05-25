@@ -84,6 +84,18 @@ curl http://127.0.0.1:<sk-port>/plugins/signalk-grafana/api/status
 - **`process.env.PORT` inside `asyncStart` is the Signal K server's HTTP port.** That's why `host.containers.internal:${process.env.PORT}` is a sensible default for Signal K's URL: the plugin runs _inside_ the Signal K process, so its env reflects how Signal K was launched.
 - **`provisioning.test.ts` runs against `dist/`, not `src/`.** If you edit `src/test/provisioning.test.ts` and run `npm test` directly, you're running the previous compiled version. Use `npm run build:all`.
 
+## Signal K device-token flow
+
+Same shape as `mayara-server-signalk-plugin`. On `start()`, if the cached token at `${dataDir}/signalk-token` (mode 0600) is missing and `requestSignalkToken !== false`, the plugin POSTs `/signalk/v1/access/requests` with `clientId: "signalk-grafana"`, `permissions: "readwrite"`. It surfaces "Awaiting Signal K token approval" status, polls until decision, then on approval: writes the JWT, re-runs `generateProvisioning(dataDir, config, token)`, and **explicitly removes + ensureRunning** the grafana container so it re-reads provisioning at boot.
+
+Why explicit recreate: signalk-container's drift detection diffs the bind-mount _path_, not file contents. The provisioning bind mount path doesn't change when we rewrite the YAML, so `ensureRunning` alone is a no-op. The drift-detection layer can't fix this — grafana is the one with the "only read at boot" constraint.
+
+Why `readwrite` permissions: the datasource only reads today, but a future Grafana-alerting → SK-notification path would write. SK admin UI cannot widen permissions post-approval (only revoke + re-request), so we ask once for the broader scope. Match mayara's reasoning.
+
+Schema defaults are NOT injected by Signal K at runtime. On first install with `{}` config, `config.requestSignalkToken` is `undefined`. The wiring treats that as `true` (`!== false`) so first-install on a secured server still kicks off the flow.
+
+**Known limitation:** streaming queries on secured SK do not authenticate. The `tkurki-signalk-datasource` opens the WebSocket from the browser (`window.location.host`) where `secureJsonData.token` is not accessible by design — Grafana's `routes[].headers` apply to HTTP proxy requests only, not WS upgrades. Explore / history queries work; live-updating dashboards on secured SK do not.
+
 ## Conventions
 
 - **No comments restating what the code does** — Signal K maintainers and the project author dislike echo comments. Comments should explain _why_ something non-obvious is the way it is (e.g. "Grafana doesn't hot-reload, so we install via env var"), not narrate the diff.

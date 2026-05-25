@@ -53,6 +53,14 @@ export const ConfigSchema = Type.Object({
     description:
       "Caution! This can expose Grafana to the internet. Only enable if you need remote access.",
   }),
+  requestSignalkToken: Type.Boolean({
+    default: true,
+    title: "Request Signal K access token automatically",
+    description:
+      "When Signal K security is enabled, request a device-access token via the standard SK " +
+      "approval flow and inject it into the Grafana Signal K datasource so dashboards can read " +
+      "paths and history from the secured server. Disable to manage credentials manually.",
+  }),
 });
 
 export type Config = Static<typeof ConfigSchema>;

@@ -11,6 +11,15 @@ import {
   handleProvisioningManifest,
 } from "./full-export";
 import { rehydrateFromBackup } from "./rehydrate";
+import {
+  awaitApproval,
+  beginTokenRequest,
+  readCachedToken,
+  writeCachedToken,
+} from "./signalk-token";
+
+const PLUGIN_ID = "signalk-grafana";
+const CONTAINER_NAME = "signalk-grafana";
 
 interface App {
   debug: (...args: unknown[]) => void;
@@ -82,9 +91,12 @@ async function resolveVolumeSource(
 
 module.exports = (app: App) => {
   let currentConfig: Config | null = null;
+  // Set true on stop() so any in-flight token poller exits its loop.
+  let tokenPollerCancelled = false;
 
   async function asyncStart(config: Config) {
     currentConfig = config;
+    tokenPollerCancelled = false;
     const dataDir = app.getDataDirPath();
 
     let containers: ContainerManagerApi | undefined;
@@ -119,7 +131,12 @@ module.exports = (app: App) => {
     }
 
     app.setPluginStatus("Generating Grafana provisioning...");
-    generateProvisioning(dataDir, config);
+    // If a token from a prior session is cached, thread it into the
+    // initial provisioning so the datasource has auth from the very
+    // first container start. New installs on secured SK fall back to
+    // the background request flow below.
+    const initialToken = readCachedToken(dataDir);
+    generateProvisioning(dataDir, config, initialToken);
 
     // Fix permissions on grafana-data from previous runs with different UID mappings.
     // podman unshare enters the user namespace where the mapped UIDs are accessible.
@@ -144,43 +161,11 @@ module.exports = (app: App) => {
       }
     }
 
-    const bind = config.bindToAllInterfaces ? "0.0.0.0" : "127.0.0.1";
-    // WHY: app.getDataDirPath() is SK-container-internal when SK runs in a container; the runtime daemon needs the host source.
-    const provisioningSrc = await resolveVolumeSource(
+    const containerConfig = await buildContainerConfig(
       containers,
-      `${dataDir}/provisioning`,
+      dataDir,
+      config,
     );
-    const grafanaDataSrc = await resolveVolumeSource(
-      containers,
-      `${dataDir}/grafana-data`,
-    );
-    const containerConfig = {
-      image: "grafana/grafana",
-      tag: config.grafanaVersion ?? "latest",
-      ports: {
-        "3000/tcp": `${bind}:${config.grafanaPort}`,
-      },
-      networkMode: config.networkName,
-      volumes: {
-        "/etc/grafana/provisioning": provisioningSrc,
-        "/var/lib/grafana": grafanaDataSrc,
-      },
-      env: {
-        GF_SECURITY_ADMIN_PASSWORD: config.adminPassword ?? "admin",
-        GF_AUTH_ANONYMOUS_ENABLED: String(config.anonymousAccess ?? true),
-        GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer",
-        GF_FEATURE_TOGGLES_DISABLE: "backgroundPluginInstaller",
-        GF_INSTALL_PLUGINS: "tkurki-signalk-datasource",
-        GF_SECURITY_ALLOW_EMBEDDING: "true",
-        ...(config.subPath
-          ? {
-              GF_SERVER_ROOT_URL: `%(protocol)s://%(domain)s:%(http_port)s${config.subPath}`,
-              GF_SERVER_SERVE_FROM_SUB_PATH: "true",
-            }
-          : {}),
-      },
-      restart: "unless-stopped",
-    };
 
     const configHash = JSON.stringify({
       tag: containerConfig.tag,
@@ -235,6 +220,179 @@ module.exports = (app: App) => {
     }
 
     app.setPluginStatus(`Grafana running at port ${config.grafanaPort}`);
+
+    // Background: if SK security is enabled and we don't already have a
+    // cached token, drive the device-access-request flow. On approval,
+    // rewrite the datasource provisioning YAML with the JWT and
+    // explicitly recreate the grafana container so it re-reads
+    // provisioning at boot. Default-true when the field is absent so
+    // first-install (Signal K does not seed schema defaults into the
+    // runtime config object) still kicks off the flow.
+    const wantsToken = config.requestSignalkToken !== false;
+    if (wantsToken && initialToken === undefined) {
+      void ensureSignalkToken(containers, dataDir, config).catch((err) => {
+        app.debug(
+          `Signal K token flow failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+    }
+  }
+
+  async function ensureSignalkToken(
+    containers: ContainerManagerApi,
+    dataDir: string,
+    config: Config,
+  ): Promise<void> {
+    const signalkPort = Number(process.env.PORT) || 3000;
+    // Permissions: ask for readwrite up front. Today the datasource only
+    // reads paths/history, but a future Grafana-alerting → SK-notification
+    // path would need write — and SK admin UI cannot widen permissions
+    // post-approval, only revoke + re-request. One ask now beats a
+    // migration later. Same reasoning as mayara-server-signalk-plugin.
+    const begin = await beginTokenRequest({
+      dataDir,
+      signalkPort,
+      clientId: PLUGIN_ID,
+      description:
+        "Signal K Grafana plugin — datasource auth for Explore and dashboards",
+      permissions: "readwrite",
+    });
+
+    switch (begin.kind) {
+      case "cached":
+        // Race: token landed between the initial readCachedToken and
+        // the POST. Re-provision + recreate so the container picks it up.
+        await applyToken(containers, dataDir, config, begin.token);
+        return;
+      case "no-security":
+        app.debug(
+          "Signal K security disabled; datasource will run without auth",
+        );
+        return;
+      case "requests-disabled":
+        app.setPluginStatus(
+          "Signal K device access requests are disabled. Enable them in " +
+            "Security → Access Requests, or paste a token into the Grafana " +
+            "Signal K datasource manually.",
+        );
+        return;
+      case "error":
+        app.debug(`Signal K token request error: ${begin.message}`);
+        return;
+      case "pending":
+        break;
+    }
+
+    app.setPluginStatus(
+      "Awaiting Signal K token approval — see Security → Access Requests",
+    );
+    app.debug(
+      `Awaiting approval at ${begin.href} (request ${begin.requestId}). ` +
+        `Set plugin config "requestSignalkToken" to false to suppress this.`,
+    );
+
+    const token = await awaitApproval(
+      begin.href,
+      signalkPort,
+      () => tokenPollerCancelled,
+      (msg) => app.debug(msg),
+    );
+    if (!token) {
+      if (!tokenPollerCancelled) {
+        app.setPluginStatus(
+          "Signal K token request was denied or expired. Dashboards on a " +
+            "secured server will not see paths until you restart the plugin " +
+            "to request again.",
+        );
+      }
+      return;
+    }
+
+    writeCachedToken(dataDir, token);
+    app.debug(
+      "Signal K token approved and cached; recreating Grafana container with auth",
+    );
+    app.setPluginStatus(
+      "Signal K token approved — recreating Grafana container...",
+    );
+    try {
+      await applyToken(containers, dataDir, config, token);
+      app.setPluginStatus(`Grafana running at port ${config.grafanaPort}`);
+    } catch (err) {
+      app.setPluginError(
+        `Token approved but Grafana recreate failed: ${err instanceof Error ? err.message : String(err)}. ` +
+          "Restart the plugin to retry.",
+      );
+    }
+  }
+
+  // Re-provision the datasource YAML with `token` and force a container
+  // recreate. Grafana only reads provisioning at startup, and
+  // signalk-container's drift detection diffs the bind-mount path (which
+  // didn't change), not the file contents — so a plain ensureRunning
+  // would not pick the new YAML up. Explicit remove + ensureRunning is
+  // the only way to get the secret into the running grafana instance.
+  async function applyToken(
+    containers: ContainerManagerApi,
+    dataDir: string,
+    config: Config,
+    token: string,
+  ): Promise<void> {
+    generateProvisioning(dataDir, config, token);
+    await containers.remove(CONTAINER_NAME);
+    const containerConfig = await buildContainerConfig(
+      containers,
+      dataDir,
+      config,
+    );
+    await containers.ensureRunning(CONTAINER_NAME, containerConfig);
+  }
+
+  // WHY: app.getDataDirPath() is SK-container-internal when SK runs in a
+  // container; the runtime daemon needs the host source. Shared between
+  // the initial start path and the post-token-approval recreate so the
+  // two paths can't diverge silently.
+  async function buildContainerConfig(
+    containers: ContainerManagerApi,
+    dataDir: string,
+    config: Config,
+  ) {
+    const bind = config.bindToAllInterfaces ? "0.0.0.0" : "127.0.0.1";
+    const provisioningSrc = await resolveVolumeSource(
+      containers,
+      `${dataDir}/provisioning`,
+    );
+    const grafanaDataSrc = await resolveVolumeSource(
+      containers,
+      `${dataDir}/grafana-data`,
+    );
+    return {
+      image: "grafana/grafana",
+      tag: config.grafanaVersion ?? "latest",
+      ports: {
+        "3000/tcp": `${bind}:${config.grafanaPort}`,
+      },
+      networkMode: config.networkName,
+      volumes: {
+        "/etc/grafana/provisioning": provisioningSrc,
+        "/var/lib/grafana": grafanaDataSrc,
+      },
+      env: {
+        GF_SECURITY_ADMIN_PASSWORD: config.adminPassword ?? "admin",
+        GF_AUTH_ANONYMOUS_ENABLED: String(config.anonymousAccess ?? true),
+        GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer",
+        GF_FEATURE_TOGGLES_DISABLE: "backgroundPluginInstaller",
+        GF_INSTALL_PLUGINS: "tkurki-signalk-datasource",
+        GF_SECURITY_ALLOW_EMBEDDING: "true",
+        ...(config.subPath
+          ? {
+              GF_SERVER_ROOT_URL: `%(protocol)s://%(domain)s:%(http_port)s${config.subPath}`,
+              GF_SERVER_SERVE_FROM_SUB_PATH: "true",
+            }
+          : {}),
+      },
+      restart: "unless-stopped",
+    };
   }
 
   const plugin = {
@@ -252,6 +410,9 @@ module.exports = (app: App) => {
     },
 
     async stop() {
+      // Break any in-flight token-approval poller before tearing down so
+      // it doesn't outlive the plugin and write a stale token after stop().
+      tokenPollerCancelled = true;
       if (currentConfig) {
         const containers = (globalThis as any).__signalk_containerManager as
           | ContainerManagerApi
