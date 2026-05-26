@@ -172,11 +172,7 @@ describe("generateProvisioning", () => {
       "utf8",
     );
     assert.ok(content.includes("useAuth: true"));
-    // Strict-indent check: secureJsonData/token must nest INSIDE the
-    // `- name: Signal K` list item (4-space key, 6-space child). At
-    // 2-space indent they become a sequence sibling and Grafana rejects
-    // the YAML with "did not find expected '-' indicator" on the
-    // `datasources:` line.
+    // 4-space indent nests under the list item; 2-space gets rejected by Grafana with "did not find expected '-' indicator".
     assert.ok(
       content.includes(`    secureJsonData:\n      token: ${jwt}\n`),
       "secureJsonData/token must be indented under the - name: list item",
