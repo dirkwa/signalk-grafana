@@ -75,7 +75,9 @@ datasources:
     );
   }
   const useAuth = token !== undefined;
-  const authBlock = useAuth ? `  secureJsonData:\n    token: ${token}\n` : "";
+  const authBlock = useAuth
+    ? `    secureJsonData:\n      token: ${token}\n`
+    : "";
   const signalkYaml = `apiVersion: 1
 datasources:
   - name: Signal K

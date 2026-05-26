@@ -172,8 +172,15 @@ describe("generateProvisioning", () => {
       "utf8",
     );
     assert.ok(content.includes("useAuth: true"));
-    assert.ok(content.includes("secureJsonData:"));
-    assert.ok(content.includes(`token: ${jwt}`));
+    // 4-space indent nests under the list item; 2-space gets rejected by Grafana with "did not find expected '-' indicator".
+    assert.ok(
+      content.includes(`    secureJsonData:\n      token: ${jwt}\n`),
+      "secureJsonData/token must be indented under the - name: list item",
+    );
+    assert.ok(
+      !content.includes(`  secureJsonData:\n    token:`),
+      "secureJsonData must not be at sequence-sibling indent",
+    );
   });
 
   it("rejects tokens that don't match the JWT shape", () => {
