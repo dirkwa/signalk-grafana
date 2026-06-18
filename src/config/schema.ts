@@ -14,7 +14,9 @@ export const ConfigSchema = Type.Object({
   adminPassword: Type.String({
     default: "admin",
     title: "Admin password",
-    description: "Initial Grafana admin password (set on first run)",
+    description:
+      "Grafana admin password, applied on every start. The Set & Save button " +
+      "changes and saves it without a full plugin restart.",
   }),
   anonymousAccess: Type.Boolean({
     default: true,
