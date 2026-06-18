@@ -461,59 +461,70 @@ module.exports = (app: App) => {
             version?: string;
             error?: string;
           } = { reachable: false };
-          try {
-            // WHY no auth: the anonymous Viewer suffices, and authenticating
-            // this 5s poll with a stale password tripped Grafana's brute-force
-            // lockout.
-            const dsRes = await fetch(
-              `${grafanaUrl}/api/datasources/name/Signal%20K`,
-              {
-                signal: AbortSignal.timeout(3000),
-              },
-            );
-            if (!dsRes.ok) {
-              signalk = {
-                reachable: false,
-                error:
-                  dsRes.status === 404
-                    ? "Datasource not provisioned"
-                    : `HTTP ${dsRes.status}`,
-              };
-            } else {
-              const ds = (await dsRes.json()) as { uid?: string };
-              if (!ds.uid) {
-                signalk = { reachable: false, error: "Datasource has no uid" };
-              } else {
-                const skRes = await fetch(
-                  `${grafanaUrl}/api/datasources/proxy/uid/${encodeURIComponent(ds.uid)}/signalk`,
-                  {
-                    signal: AbortSignal.timeout(3000),
-                  },
-                );
-                if (skRes.ok) {
-                  const disc = (await skRes.json()) as {
-                    server?: { version?: string };
-                    endpoints?: { v1?: { "signalk-http"?: string } };
-                  };
-                  const proxiedUrl = disc.endpoints?.v1?.["signalk-http"];
-                  signalk = {
-                    reachable: true,
-                    version: disc.server?.version,
-                    url: proxiedUrl?.replace(/\/signalk\/v1\/api\/?$/, ""),
-                  };
-                } else {
-                  signalk = {
-                    reachable: false,
-                    error: `HTTP ${skRes.status}`,
-                  };
-                }
-              }
-            }
-          } catch (err) {
+          // WHY no auth below: authenticating this 5s poll with a stale
+          // password tripped Grafana's brute-force lockout; the anonymous
+          // Viewer reads the datasource instead, so probing needs anonymous
+          // access on (the default) and is skipped when it is off.
+          if (currentConfig.anonymousAccess === false) {
             signalk = {
               reachable: false,
-              error: err instanceof Error ? err.message : String(err),
+              error: "Anonymous access disabled; cannot probe datasource",
             };
+          } else {
+            try {
+              const dsRes = await fetch(
+                `${grafanaUrl}/api/datasources/name/Signal%20K`,
+                {
+                  signal: AbortSignal.timeout(3000),
+                },
+              );
+              if (!dsRes.ok) {
+                signalk = {
+                  reachable: false,
+                  error:
+                    dsRes.status === 404
+                      ? "Datasource not provisioned"
+                      : `HTTP ${dsRes.status}`,
+                };
+              } else {
+                const ds = (await dsRes.json()) as { uid?: string };
+                if (!ds.uid) {
+                  signalk = {
+                    reachable: false,
+                    error: "Datasource has no uid",
+                  };
+                } else {
+                  const skRes = await fetch(
+                    `${grafanaUrl}/api/datasources/proxy/uid/${encodeURIComponent(ds.uid)}/signalk`,
+                    {
+                      signal: AbortSignal.timeout(3000),
+                    },
+                  );
+                  if (skRes.ok) {
+                    const disc = (await skRes.json()) as {
+                      server?: { version?: string };
+                      endpoints?: { v1?: { "signalk-http"?: string } };
+                    };
+                    const proxiedUrl = disc.endpoints?.v1?.["signalk-http"];
+                    signalk = {
+                      reachable: true,
+                      version: disc.server?.version,
+                      url: proxiedUrl?.replace(/\/signalk\/v1\/api\/?$/, ""),
+                    };
+                  } else {
+                    signalk = {
+                      reachable: false,
+                      error: `HTTP ${skRes.status}`,
+                    };
+                  }
+                }
+              }
+            } catch (err) {
+              signalk = {
+                reachable: false,
+                error: err instanceof Error ? err.message : String(err),
+              };
+            }
           }
 
           res.json({
@@ -794,9 +805,8 @@ module.exports = (app: App) => {
           }
 
           if (!currentConfig) {
-            // Plugin stopped mid-request: the live container password changed
-            // but there is no full config to persist, and writing a one-field
-            // object would wipe every other saved option.
+            // WHY skip persist: with no live config, a one-field save would
+            // wipe every other saved option.
             res.json({
               status: "ok",
               message:
@@ -807,10 +817,8 @@ module.exports = (app: App) => {
           }
 
           currentConfig.adminPassword = password;
-          // Persist to saved config: asyncStart re-applies config.adminPassword
-          // on every start, so without this the change reverts on the next
-          // restart or container recreate. Merge over currentConfig so no other
-          // field is dropped.
+          // WHY persist: asyncStart re-applies config.adminPassword on every
+          // start, so an unsaved change reverts on the next restart/recreate.
           const savedConfig = currentConfig;
           const persisted = await new Promise<string | null>((resolve) => {
             if (typeof app.savePluginOptions !== "function") {
