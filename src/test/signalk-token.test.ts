@@ -1,4 +1,4 @@
-import { describe, it, before, beforeEach, afterEach } from "node:test";
+import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   existsSync,
@@ -13,61 +13,54 @@ import { join } from "path";
 import {
   awaitApproval,
   beginTokenRequest,
+  JsonResponse,
   readCachedToken,
+  SignalkBase,
+  Transport,
   writeCachedToken,
 } from "../signalk-token";
 
 let dataDir: string;
-let originalFetch: typeof globalThis.fetch;
-
-before(() => {
-  originalFetch = globalThis.fetch;
-});
 
 beforeEach(() => {
   dataDir = mkdtempSync(join(tmpdir(), "grafana-token-test-"));
 });
 
 afterEach(() => {
-  globalThis.fetch = originalFetch;
   rmSync(dataDir, { recursive: true, force: true });
 });
 
-function makeFetchResponse(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
+const httpsBase: SignalkBase = {
+  scheme: "https",
+  port: 443,
+  tlsSkipVerify: true,
+};
 
-// Minimal stub that records every call and returns a fixed response. We
-// don't pull in a mock library — node:test runs without vitest, and the
-// surface area we exercise is small enough that a hand-rolled stub is
-// clearer than mocking.
-type FetchStub = ((
-  input: string | URL | Request,
-  init?: RequestInit,
-) => Promise<Response>) & { calls: Array<{ url: string; init?: RequestInit }> };
+const json = (status: number, body: unknown): JsonResponse => ({
+  status,
+  body: JSON.stringify(body),
+});
 
-function stubFetch(
-  fn: (call: number, url: string, init?: RequestInit) => Promise<Response>,
-): FetchStub {
-  const calls: FetchStub["calls"] = [];
-  const stub = ((
-    input: string | URL | Request,
-    init?: RequestInit,
-  ): Promise<Response> => {
-    const url =
-      typeof input === "string"
-        ? input
-        : input instanceof URL
-          ? input.toString()
-          : input.url;
-    calls.push({ url, init });
-    return fn(calls.length, url, init);
-  }) as FetchStub;
+// Hand-rolled transport stub: records every call and delegates to a per-call
+// responder. node:test runs without a mock library and the surface is small.
+type TransportStub = Transport & {
+  calls: Array<{
+    base: SignalkBase;
+    path: string;
+    method: string;
+    body?: string;
+  }>;
+};
+
+function stubTransport(
+  fn: (call: number, path: string, method: string) => Promise<JsonResponse>,
+): TransportStub {
+  const calls: TransportStub["calls"] = [];
+  const stub = ((base, path, method, body) => {
+    calls.push({ base, path, method, body });
+    return fn(calls.length, path, method);
+  }) as TransportStub;
   stub.calls = calls;
-  globalThis.fetch = stub;
   return stub;
 }
 
@@ -91,7 +84,6 @@ describe("signalk-token: cache helpers", () => {
     const path = join(dataDir, "signalk-token");
     assert.ok(existsSync(path));
     assert.equal(readFileSync(path, "utf8"), "eyJabc.def");
-    // Skip the mode assertion on Windows where chmod is a no-op.
     if (process.platform !== "win32") {
       const mode = statSync(path).mode & 0o777;
       assert.equal(mode, 0o600);
@@ -104,7 +96,7 @@ describe("signalk-token: beginTokenRequest", () => {
     writeFileSync(join(dataDir, "signalk-token"), "cached-tok");
     const result = await beginTokenRequest({
       dataDir,
-      signalkPort: 3000,
+      base: httpsBase,
       clientId: "test",
       description: "test",
     });
@@ -112,45 +104,45 @@ describe("signalk-token: beginTokenRequest", () => {
   });
 
   it("returns kind=no-security on HTTP 404", async () => {
-    stubFetch(() =>
-      Promise.resolve(makeFetchResponse(404, { message: "security off" })),
-    );
     const result = await beginTokenRequest({
       dataDir,
-      signalkPort: 3000,
+      base: httpsBase,
       clientId: "test",
       description: "test",
+      transport: stubTransport(() =>
+        Promise.resolve(json(404, { message: "security off" })),
+      ),
     });
     assert.deepEqual(result, { kind: "no-security" });
   });
 
   it("returns kind=requests-disabled on HTTP 403", async () => {
-    stubFetch(() => Promise.resolve(makeFetchResponse(403, {})));
     const result = await beginTokenRequest({
       dataDir,
-      signalkPort: 3000,
+      base: httpsBase,
       clientId: "test",
       description: "test",
+      transport: stubTransport(() => Promise.resolve(json(403, {}))),
     });
     assert.deepEqual(result, { kind: "requests-disabled" });
   });
 
   it("returns kind=pending with the href when SK accepts the request", async () => {
-    stubFetch(() =>
-      Promise.resolve(
-        makeFetchResponse(202, {
-          state: "PENDING",
-          requestId: "req-123",
-          statusCode: 202,
-          href: "/signalk/v1/requests/req-123",
-        }),
-      ),
-    );
     const result = await beginTokenRequest({
       dataDir,
-      signalkPort: 3000,
+      base: httpsBase,
       clientId: "test",
       description: "test",
+      transport: stubTransport(() =>
+        Promise.resolve(
+          json(202, {
+            state: "PENDING",
+            requestId: "req-123",
+            statusCode: 202,
+            href: "/signalk/v1/requests/req-123",
+          }),
+        ),
+      ),
     });
     assert.deepEqual(result, {
       kind: "pending",
@@ -160,44 +152,46 @@ describe("signalk-token: beginTokenRequest", () => {
   });
 
   it("caches the token and returns kind=cached when SK already has approval on file", async () => {
-    stubFetch(() =>
-      Promise.resolve(
-        makeFetchResponse(200, {
-          state: "COMPLETED",
-          requestId: "req-abc",
-          statusCode: 200,
-          accessRequest: { permission: "APPROVED", token: "instant-tok" },
-        }),
-      ),
-    );
     const result = await beginTokenRequest({
       dataDir,
-      signalkPort: 3000,
+      base: httpsBase,
       clientId: "test",
       description: "test",
+      transport: stubTransport(() =>
+        Promise.resolve(
+          json(200, {
+            state: "COMPLETED",
+            requestId: "req-abc",
+            statusCode: 200,
+            accessRequest: { permission: "APPROVED", token: "instant-tok" },
+          }),
+        ),
+      ),
     });
     assert.deepEqual(result, { kind: "cached", token: "instant-tok" });
     assert.equal(readCachedToken(dataDir), "instant-tok");
   });
 
   it("returns kind=error on network failure", async () => {
-    stubFetch(() => Promise.reject(new Error("ECONNREFUSED")));
     const result = await beginTokenRequest({
       dataDir,
-      signalkPort: 3000,
+      base: httpsBase,
       clientId: "test",
       description: "test",
+      transport: stubTransport(() =>
+        Promise.reject(new Error("SELF_SIGNED_CERT_IN_CHAIN")),
+      ),
     });
     assert.equal(result.kind, "error");
     if (result.kind === "error") {
-      assert.ok(result.message.includes("ECONNREFUSED"));
+      assert.ok(result.message.includes("SELF_SIGNED_CERT_IN_CHAIN"));
     }
   });
 
-  it("uses the POST endpoint with the clientId and permissions", async () => {
-    const stub = stubFetch(() =>
+  it("posts over the resolved https base with clientId and permissions", async () => {
+    const stub = stubTransport(() =>
       Promise.resolve(
-        makeFetchResponse(202, {
+        json(202, {
           state: "PENDING",
           requestId: "r",
           statusCode: 202,
@@ -207,17 +201,16 @@ describe("signalk-token: beginTokenRequest", () => {
     );
     await beginTokenRequest({
       dataDir,
-      signalkPort: 3000,
+      base: httpsBase,
       clientId: "grafana-test",
       description: "Grafana plugin test",
       permissions: "readwrite",
+      transport: stub,
     });
-    assert.equal(
-      stub.calls[0].url,
-      "http://127.0.0.1:3000/signalk/v1/access/requests",
-    );
-    assert.equal(stub.calls[0].init?.method, "POST");
-    const body = JSON.parse(stub.calls[0].init?.body as string) as Record<
+    assert.equal(stub.calls[0].path, "/signalk/v1/access/requests");
+    assert.equal(stub.calls[0].method, "POST");
+    assert.deepEqual(stub.calls[0].base, httpsBase);
+    const body = JSON.parse(stub.calls[0].body as string) as Record<
       string,
       string
     >;
@@ -228,75 +221,71 @@ describe("signalk-token: beginTokenRequest", () => {
 
 describe("signalk-token: awaitApproval", () => {
   it("returns the token when the request transitions to COMPLETED with a token", async () => {
-    const stub = stubFetch((call) => {
-      if (call === 1) {
-        return Promise.resolve(
-          makeFetchResponse(200, { state: "PENDING", requestId: "r" }),
-        );
-      }
-      return Promise.resolve(
-        makeFetchResponse(200, {
-          state: "COMPLETED",
-          requestId: "r",
-          accessRequest: { permission: "APPROVED", token: "approved-tok" },
-        }),
-      );
-    });
+    const stub = stubTransport((call) =>
+      call === 1
+        ? Promise.resolve(json(200, { state: "PENDING", requestId: "r" }))
+        : Promise.resolve(
+            json(200, {
+              state: "COMPLETED",
+              requestId: "r",
+              accessRequest: { permission: "APPROVED", token: "approved-tok" },
+            }),
+          ),
+    );
     const token = await awaitApproval(
       "/signalk/v1/requests/r",
-      3000,
+      httpsBase,
       () => false,
       () => {},
       5,
+      stub,
     );
     assert.equal(token, "approved-tok");
     assert.ok(stub.calls.length >= 2);
   });
 
   it("returns undefined when the admin denies (COMPLETED without a token)", async () => {
-    stubFetch(() =>
-      Promise.resolve(
-        makeFetchResponse(200, {
-          state: "COMPLETED",
-          requestId: "r",
-          accessRequest: { permission: "DENIED" },
-        }),
-      ),
-    );
     const token = await awaitApproval(
       "/signalk/v1/requests/r",
-      3000,
+      httpsBase,
       () => false,
       () => {},
       5,
+      stubTransport(() =>
+        Promise.resolve(
+          json(200, {
+            state: "COMPLETED",
+            requestId: "r",
+            accessRequest: { permission: "DENIED" },
+          }),
+        ),
+      ),
     );
     assert.equal(token, undefined);
   });
 
   it("returns undefined when isCancelled becomes true mid-poll", async () => {
     let cancelled = false;
-    stubFetch(() =>
-      Promise.resolve(
-        makeFetchResponse(200, { state: "PENDING", requestId: "r" }),
-      ),
-    );
     setTimeout(() => {
       cancelled = true;
     }, 20);
     const token = await awaitApproval(
       "/signalk/v1/requests/r",
-      3000,
+      httpsBase,
       () => cancelled,
       () => {},
       5,
+      stubTransport(() =>
+        Promise.resolve(json(200, { state: "PENDING", requestId: "r" })),
+      ),
     );
     assert.equal(token, undefined);
   });
 
-  it("resolves a relative href against http://127.0.0.1:port", async () => {
-    const stub = stubFetch(() =>
+  it("polls the relative href path against the resolved base", async () => {
+    const stub = stubTransport(() =>
       Promise.resolve(
-        makeFetchResponse(200, {
+        json(200, {
           state: "COMPLETED",
           requestId: "r",
           accessRequest: { token: "t" },
@@ -305,14 +294,35 @@ describe("signalk-token: awaitApproval", () => {
     );
     await awaitApproval(
       "/signalk/v1/requests/r",
-      4321,
+      httpsBase,
       () => false,
       () => {},
       5,
+      stub,
     );
-    assert.equal(
-      stub.calls[0].url,
-      "http://127.0.0.1:4321/signalk/v1/requests/r",
+    assert.equal(stub.calls[0].path, "/signalk/v1/requests/r");
+    assert.deepEqual(stub.calls[0].base, httpsBase);
+  });
+
+  it("strips scheme/host from an absolute href and polls the resolved base", async () => {
+    const stub = stubTransport(() =>
+      Promise.resolve(
+        json(200, {
+          state: "COMPLETED",
+          requestId: "r",
+          accessRequest: { token: "t" },
+        }),
+      ),
     );
+    await awaitApproval(
+      "http://example:9999/signalk/v1/requests/r",
+      httpsBase,
+      () => false,
+      () => {},
+      5,
+      stub,
+    );
+    assert.equal(stub.calls[0].path, "/signalk/v1/requests/r");
+    assert.deepEqual(stub.calls[0].base, httpsBase);
   });
 });

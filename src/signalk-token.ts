@@ -1,5 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 
 const TOKEN_FILENAME = "signalk-token";
 const POLL_INTERVAL_MS = 5_000;
@@ -11,13 +13,71 @@ export type EnsureResult =
   | { kind: "pending"; requestId: string; href: string }
   | { kind: "error"; message: string };
 
+// The plugin reaches SK over the same scheme/port the datasource probe
+// resolved. On a TLS server the http port 302-redirects to https, and a plain
+// fetch would either GET-on-redirect or fail on the self-signed loopback cert —
+// which silently aborted the token flow. node:https.request with
+// rejectUnauthorized:false (undici's Agent isn't requireable for fetch here)
+// talks to the resolved endpoint directly, no redirect, no cert failure.
+export interface SignalkBase {
+  scheme: "http" | "https";
+  port: number;
+  tlsSkipVerify: boolean;
+}
+
 export interface EnsureOptions {
   dataDir: string;
-  signalkPort: number;
+  base: SignalkBase;
   clientId: string;
   description: string;
   permissions?: "readonly" | "readwrite" | "admin";
+  transport?: Transport;
 }
+
+export interface JsonResponse {
+  status: number;
+  body: string;
+}
+
+// Injectable so the request/poll logic is testable without a live server.
+export type Transport = (
+  base: SignalkBase,
+  path: string,
+  method: "GET" | "POST",
+  body?: string,
+) => Promise<JsonResponse>;
+
+const realTransport: Transport = (base, path, method, body) => {
+  const secure = base.scheme === "https";
+  return new Promise((resolve, reject) => {
+    const req = (secure ? httpsRequest : httpRequest)(
+      {
+        host: "127.0.0.1",
+        port: base.port,
+        path,
+        method,
+        headers: {
+          "Content-Type": "application/json",
+          ...(body ? { "Content-Length": Buffer.byteLength(body) } : {}),
+        },
+        ...(secure ? { rejectUnauthorized: !base.tlsSkipVerify } : {}),
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c) => chunks.push(c as Buffer));
+        res.on("end", () =>
+          resolve({
+            status: res.statusCode ?? 0,
+            body: Buffer.concat(chunks).toString("utf8"),
+          }),
+        );
+      },
+    );
+    req.on("error", reject);
+    if (body) req.write(body);
+    req.end();
+  });
+};
 
 export function readCachedToken(dataDir: string): string | undefined {
   const path = join(dataDir, TOKEN_FILENAME);
@@ -55,13 +115,15 @@ export async function beginTokenRequest(
   const cached = readCachedToken(opts.dataDir);
   if (cached) return { kind: "cached", token: cached };
 
-  const url = `http://127.0.0.1:${opts.signalkPort}/signalk/v1/access/requests`;
-  let res: Response;
+  const transport = opts.transport ?? realTransport;
+  const path = "/signalk/v1/access/requests";
+  let res: JsonResponse;
   try {
-    res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    res = await transport(
+      opts.base,
+      path,
+      "POST",
+      JSON.stringify({
         clientId: opts.clientId,
         description: opts.description,
         // Future Grafana-alerting → SK-notification paths need write;
@@ -69,10 +131,10 @@ export async function beginTokenRequest(
         // broadly up front instead of forcing a revoke/re-request later.
         permissions: opts.permissions ?? "readwrite",
       }),
-    });
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return { kind: "error", message: `POST ${url} failed: ${msg}` };
+    return { kind: "error", message: `POST ${path} failed: ${msg}` };
   }
 
   if (res.status === 404) {
@@ -90,7 +152,7 @@ export async function beginTokenRequest(
     };
   }
 
-  const reply = (await res.json()) as AccessRequestReply;
+  const reply = JSON.parse(res.body) as AccessRequestReply;
   if (reply.state === "COMPLETED") {
     // Unusual but possible — approval already on file. Cache + return.
     const token = reply.accessRequest?.token;
@@ -120,33 +182,36 @@ export async function beginTokenRequest(
 // override to single-digit ms.
 export async function awaitApproval(
   href: string,
-  signalkPort: number,
+  base: SignalkBase,
   isCancelled: () => boolean,
   log: (msg: string) => void,
   pollIntervalMs: number = POLL_INTERVAL_MS,
+  transport: Transport = realTransport,
 ): Promise<string | undefined> {
-  const url = href.startsWith("http")
-    ? href
-    : `http://127.0.0.1:${signalkPort}${href.startsWith("/") ? "" : "/"}${href}`;
+  // href from SK may be absolute (legacy) or a relative path; strip any scheme
+  // and host so the poll always uses the resolved loopback base.
+  const path = href.startsWith("http")
+    ? new URL(href).pathname
+    : `${href.startsWith("/") ? "" : "/"}${href}`;
 
   while (!isCancelled()) {
     await sleep(pollIntervalMs);
     if (isCancelled()) return undefined;
 
-    let res: Response;
+    let res: JsonResponse;
     try {
-      res = await fetch(url, { method: "GET" });
+      res = await transport(base, path, "GET");
     } catch (err) {
       log(
         `Token poll fetch failed (will retry): ${err instanceof Error ? err.message : String(err)}`,
       );
       continue;
     }
-    if (!res.ok) {
+    if (res.status < 200 || res.status >= 300) {
       log(`Token poll: HTTP ${res.status} (will retry)`);
       continue;
     }
-    const reply = (await res.json()) as AccessRequestReply;
+    const reply = JSON.parse(res.body) as AccessRequestReply;
     if (reply.state === "PENDING") {
       continue;
     }
