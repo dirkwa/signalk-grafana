@@ -134,17 +134,22 @@ interface RecreateInputs {
 }
 
 function computeConfigHash(inputs: RecreateInputs, dataDir: string): string {
-  let signalkYaml = "";
-  try {
-    signalkYaml = readFileSync(
-      join(dataDir, "provisioning", "datasources", "signalk.yaml"),
-      "utf8",
-    );
-  } catch {
-    // not yet written — an empty marker still differs from any real hash
-  }
+  // Hash every datasource YAML so a change to any of them (questdb or signalk)
+  // forces a recreate — Grafana reads provisioning only at boot.
+  const readDatasourceYaml = (name: string): string => {
+    try {
+      return readFileSync(
+        join(dataDir, "provisioning", "datasources", name),
+        "utf8",
+      );
+    } catch {
+      return "";
+    }
+  };
   const provisioningHash = createHash("sha256")
-    .update(signalkYaml)
+    .update(readDatasourceYaml("questdb.yaml"))
+    .update("\0")
+    .update(readDatasourceYaml("signalk.yaml"))
     .digest("hex");
   return JSON.stringify({
     tag: inputs.tag,
@@ -159,8 +164,7 @@ module.exports = (app: App) => {
   let currentConfig: Config | null = null;
   // Set true on stop() so any in-flight token poller exits its loop.
   let tokenPollerCancelled = false;
-  // The endpoint resolved this session (probe result or signalkUrl override),
-  // reused by the post-token-approval recreate so the two paths can't diverge.
+  // WHY: token-approval reprovisioning must reuse the startup endpoint.
   let sessionEndpoint: SignalkEndpoint | null = null;
 
   async function asyncStart(config: Config) {
@@ -200,10 +204,8 @@ module.exports = (app: App) => {
     }
 
     app.setPluginStatus("Detecting Signal K server connection...");
-    // The plugin runs inside the SK process, so a 127.0.0.1 probe learns the
-    // server's real scheme/port/cert. An explicit signalkUrl override skips
-    // the probe and wins. Inconclusive probes reuse the last-good endpoint so
-    // a transient boot-time failure never downgrades a working https setup.
+    // WHY: in-process 127.0.0.1 probe learns the server's real scheme/port/cert;
+    // signalkUrl overrides it; inconclusive reuses last-good (never downgrades).
     if (config.signalkUrl) {
       sessionEndpoint = resolveSignalkEndpoint(config);
     } else {
@@ -267,10 +269,8 @@ module.exports = (app: App) => {
       config,
     );
 
-    // Fold the datasource YAML content into the recreate hash: the container
-    // env/ports don't change when only the scheme/port/tlsSkipVerify changes,
-    // and Grafana reads provisioning only at boot, so a YAML-only change must
-    // still force exactly one recreate.
+    // WHY YAML in the hash: a scheme/port/tlsSkipVerify change rewrites only the
+    // YAML (not env/ports), and Grafana reads provisioning solely at boot.
     const configHash = computeConfigHash(containerConfig, dataDir);
     const hashFile = `${dataDir}.container-hash`;
     let lastHash = "";
