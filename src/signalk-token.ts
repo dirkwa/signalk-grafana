@@ -13,12 +13,8 @@ export type EnsureResult =
   | { kind: "pending"; requestId: string; href: string }
   | { kind: "error"; message: string };
 
-// The plugin reaches SK over the same scheme/port the datasource probe
-// resolved. On a TLS server the http port 302-redirects to https, and a plain
-// fetch would either GET-on-redirect or fail on the self-signed loopback cert —
-// which silently aborted the token flow. node:https.request with
-// rejectUnauthorized:false (undici's Agent isn't requireable for fetch here)
-// talks to the resolved endpoint directly, no redirect, no cert failure.
+// WHY a resolved base + node:https: hitting the http port 302-redirects to a
+// self-signed https loopback that fetch can't verify, silently aborting tokens.
 export interface SignalkBase {
   scheme: "http" | "https";
   port: number;
@@ -65,6 +61,9 @@ const realTransport: Transport = (base, path, method, body) => {
       (res) => {
         const chunks: Buffer[] = [];
         res.on("data", (c) => chunks.push(c as Buffer));
+        // Without this a mid-body connection reset would never fire "end",
+        // hanging the promise and stalling the token poller.
+        res.on("error", reject);
         res.on("end", () =>
           resolve({
             status: res.statusCode ?? 0,

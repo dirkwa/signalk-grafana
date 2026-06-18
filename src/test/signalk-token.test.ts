@@ -36,6 +36,11 @@ const httpsBase: SignalkBase = {
   tlsSkipVerify: true,
 };
 
+// JWT-shaped fixture: three base64url segments, matching the provisioning
+// layer's JWT_SHAPE guard.
+const JWT =
+  "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJzaWduYWxrLWdyYWZhbmEifQ.abcDEF_123-456";
+
 const json = (status: number, body: unknown): JsonResponse => ({
   status,
   body: JSON.stringify(body),
@@ -58,7 +63,7 @@ function stubTransport(
   const calls: TransportStub["calls"] = [];
   const stub = ((base, path, method, body) => {
     calls.push({ base, path, method, body });
-    return fn(calls.length, path, method);
+    return fn(calls.length - 1, path, method);
   }) as TransportStub;
   stub.calls = calls;
   return stub;
@@ -163,13 +168,13 @@ describe("signalk-token: beginTokenRequest", () => {
             state: "COMPLETED",
             requestId: "req-abc",
             statusCode: 200,
-            accessRequest: { permission: "APPROVED", token: "instant-tok" },
+            accessRequest: { permission: "APPROVED", token: JWT },
           }),
         ),
       ),
     });
-    assert.deepEqual(result, { kind: "cached", token: "instant-tok" });
-    assert.equal(readCachedToken(dataDir), "instant-tok");
+    assert.deepEqual(result, { kind: "cached", token: JWT });
+    assert.equal(readCachedToken(dataDir), JWT);
   });
 
   it("returns kind=error on network failure", async () => {
@@ -222,13 +227,13 @@ describe("signalk-token: beginTokenRequest", () => {
 describe("signalk-token: awaitApproval", () => {
   it("returns the token when the request transitions to COMPLETED with a token", async () => {
     const stub = stubTransport((call) =>
-      call === 1
+      call === 0
         ? Promise.resolve(json(200, { state: "PENDING", requestId: "r" }))
         : Promise.resolve(
             json(200, {
               state: "COMPLETED",
               requestId: "r",
-              accessRequest: { permission: "APPROVED", token: "approved-tok" },
+              accessRequest: { permission: "APPROVED", token: JWT },
             }),
           ),
     );
@@ -240,7 +245,7 @@ describe("signalk-token: awaitApproval", () => {
       5,
       stub,
     );
-    assert.equal(token, "approved-tok");
+    assert.equal(token, JWT);
     assert.ok(stub.calls.length >= 2);
   });
 
@@ -288,7 +293,7 @@ describe("signalk-token: awaitApproval", () => {
         json(200, {
           state: "COMPLETED",
           requestId: "r",
-          accessRequest: { token: "t" },
+          accessRequest: { token: JWT },
         }),
       ),
     );
@@ -310,7 +315,7 @@ describe("signalk-token: awaitApproval", () => {
         json(200, {
           state: "COMPLETED",
           requestId: "r",
-          accessRequest: { token: "t" },
+          accessRequest: { token: JWT },
         }),
       ),
     );
