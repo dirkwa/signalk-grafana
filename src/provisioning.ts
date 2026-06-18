@@ -5,6 +5,7 @@ import { Config } from "./config/schema";
 export interface SignalkEndpoint {
   host: string;
   ssl: boolean;
+  tlsSkipVerify: boolean;
 }
 
 export function resolveSignalkEndpoint(config: Config): SignalkEndpoint {
@@ -18,11 +19,18 @@ export function resolveSignalkEndpoint(config: Config): SignalkEndpoint {
         `Invalid signalkUrl protocol "${parsed.protocol}". Use http:// or https://.`,
       );
     }
-    return { host: parsed.host, ssl: parsed.protocol === "https:" };
+    // Override path: the user opts into skipping verification explicitly, so a
+    // typo'd URL fails loudly rather than silently trusting any cert.
+    return {
+      host: parsed.host,
+      ssl: parsed.protocol === "https:",
+      tlsSkipVerify: config.tlsSkipVerify === true,
+    };
   }
   return {
     host: `host.containers.internal:${process.env.PORT || 3000}`,
     ssl: false,
+    tlsSkipVerify: false,
   };
 }
 
@@ -36,6 +44,7 @@ export function generateProvisioning(
   dataDir: string,
   config: Config,
   token?: string,
+  endpoint?: SignalkEndpoint,
 ): void {
   const provDir = join(dataDir, "provisioning");
   const dsDir = join(provDir, "datasources");
@@ -68,13 +77,23 @@ datasources:
 
   writeFileSync(join(dsDir, "questdb.yaml"), questdbYaml);
 
-  const { host: skHost, ssl: skSsl } = resolveSignalkEndpoint(config);
+  // An explicit signalkUrl override always wins over a probed endpoint.
+  const {
+    host: skHost,
+    ssl: skSsl,
+    tlsSkipVerify: skTlsSkipVerify,
+  } = config.signalkUrl
+    ? resolveSignalkEndpoint(config)
+    : (endpoint ?? resolveSignalkEndpoint(config));
   if (token !== undefined && !JWT_SHAPE.test(token)) {
     throw new Error(
       "generateProvisioning: token does not match the expected JWT shape; refusing to write",
     );
   }
   const useAuth = token !== undefined;
+  // tkurki-signalk-datasource has no tlsSkipVerify field; Grafana's generic
+  // datasource proxy honours jsonData.tlsSkipVerify for plugin proxy routes.
+  const tlsSkipBlock = skTlsSkipVerify ? `      tlsSkipVerify: true\n` : "";
   const authBlock = useAuth
     ? `    secureJsonData:\n      token: ${token}\n`
     : "";
@@ -91,7 +110,7 @@ datasources:
       hostname: ${skHost}
       ssl: ${skSsl}
       useAuth: ${useAuth}
-${authBlock}`;
+${tlsSkipBlock}${authBlock}`;
 
   writeFileSync(join(dsDir, "signalk.yaml"), signalkYaml);
 }
