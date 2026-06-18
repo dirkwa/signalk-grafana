@@ -22,6 +22,7 @@ import {
   awaitApproval,
   beginTokenRequest,
   readCachedToken,
+  SignalkBase,
   writeCachedToken,
 } from "./signalk-token";
 
@@ -128,6 +129,28 @@ function writeLastGoodEndpoint(
   } catch {
     // best-effort cache; a failed write just means a re-probe next start
   }
+}
+
+// Derive the loopback base (scheme/port) the token client should use from the
+// resolved datasource endpoint. Falls back to plain http on process.env.PORT
+// when no endpoint resolved (unsecured/legacy path).
+function signalkBaseFromEndpoint(
+  endpoint: SignalkEndpoint | null,
+): SignalkBase {
+  if (endpoint) {
+    const portStr = endpoint.host.split(":")[1];
+    const port = Number(portStr) || (endpoint.ssl ? 443 : 80);
+    return {
+      scheme: endpoint.ssl ? "https" : "http",
+      port,
+      tlsSkipVerify: endpoint.tlsSkipVerify,
+    };
+  }
+  return {
+    scheme: "http",
+    port: Number(process.env.PORT) || 3000,
+    tlsSkipVerify: false,
+  };
 }
 
 interface RecreateInputs {
@@ -346,7 +369,10 @@ module.exports = (app: App) => {
     dataDir: string,
     config: Config,
   ): Promise<void> {
-    const signalkPort = Number(process.env.PORT) || 3000;
+    // Reach SK over the scheme/port the startup probe resolved. On a TLS
+    // server, hitting the plain http port instead would 302 to https and the
+    // self-signed loopback cert would abort the request, leaving no token.
+    const base = signalkBaseFromEndpoint(sessionEndpoint);
     // Permissions: ask for readwrite up front. Today the datasource only
     // reads paths/history, but a future Grafana-alerting → SK-notification
     // path would need write — and SK admin UI cannot widen permissions
@@ -354,7 +380,7 @@ module.exports = (app: App) => {
     // migration later. Same reasoning as mayara-server-signalk-plugin.
     const begin = await beginTokenRequest({
       dataDir,
-      signalkPort,
+      base,
       clientId: PLUGIN_ID,
       description:
         "Signal K Grafana plugin — datasource auth for Explore and dashboards",
@@ -396,7 +422,7 @@ module.exports = (app: App) => {
 
     const token = await awaitApproval(
       begin.href,
-      signalkPort,
+      base,
       () => tokenPollerCancelled,
       (msg) => app.debug(msg),
     );
