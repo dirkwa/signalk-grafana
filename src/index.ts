@@ -1,8 +1,15 @@
+import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "fs";
+import { join } from "node:path";
 import path from "node:path";
 import { IRouter } from "express";
 import { Config, ConfigSchema } from "./config/schema";
-import { generateProvisioning } from "./provisioning";
+import {
+  generateProvisioning,
+  resolveSignalkEndpoint,
+  SignalkEndpoint,
+} from "./provisioning";
+import { probeResultToEndpoint, probeSignalkEndpoint } from "./signalk-probe";
 import {
   handleDashboardFile,
   handleDashboardManifest,
@@ -89,10 +96,72 @@ async function resolveVolumeSource(
   }
 }
 
+const ENDPOINT_SIDECAR = "signalk-endpoint";
+
+function readLastGoodEndpoint(dataDir: string): SignalkEndpoint | undefined {
+  try {
+    const raw = readFileSync(join(dataDir, ENDPOINT_SIDECAR), "utf8");
+    const parsed = JSON.parse(raw) as Partial<SignalkEndpoint>;
+    if (
+      typeof parsed.host === "string" &&
+      typeof parsed.ssl === "boolean" &&
+      typeof parsed.tlsSkipVerify === "boolean"
+    ) {
+      return parsed as SignalkEndpoint;
+    }
+  } catch {
+    // no/invalid sidecar — caller falls back to the legacy default
+  }
+  return undefined;
+}
+
+function writeLastGoodEndpoint(
+  dataDir: string,
+  endpoint: SignalkEndpoint,
+): void {
+  try {
+    writeFileSync(join(dataDir, ENDPOINT_SIDECAR), JSON.stringify(endpoint));
+  } catch {
+    // best-effort cache; a failed write just means a re-probe next start
+  }
+}
+
+interface RecreateInputs {
+  tag: string;
+  ports: Record<string, string>;
+  env: Record<string, string>;
+  networkMode: string;
+}
+
+function computeConfigHash(inputs: RecreateInputs, dataDir: string): string {
+  let signalkYaml = "";
+  try {
+    signalkYaml = readFileSync(
+      join(dataDir, "provisioning", "datasources", "signalk.yaml"),
+      "utf8",
+    );
+  } catch {
+    // not yet written — an empty marker still differs from any real hash
+  }
+  const provisioningHash = createHash("sha256")
+    .update(signalkYaml)
+    .digest("hex");
+  return JSON.stringify({
+    tag: inputs.tag,
+    ports: inputs.ports,
+    env: inputs.env,
+    networkMode: inputs.networkMode,
+    provisioningHash,
+  });
+}
+
 module.exports = (app: App) => {
   let currentConfig: Config | null = null;
   // Set true on stop() so any in-flight token poller exits its loop.
   let tokenPollerCancelled = false;
+  // The endpoint resolved this session (probe result or signalkUrl override),
+  // reused by the post-token-approval recreate so the two paths can't diverge.
+  let sessionEndpoint: SignalkEndpoint | null = null;
 
   async function asyncStart(config: Config) {
     currentConfig = config;
@@ -130,13 +199,44 @@ module.exports = (app: App) => {
       );
     }
 
+    app.setPluginStatus("Detecting Signal K server connection...");
+    // The plugin runs inside the SK process, so a 127.0.0.1 probe learns the
+    // server's real scheme/port/cert. An explicit signalkUrl override skips
+    // the probe and wins. Inconclusive probes reuse the last-good endpoint so
+    // a transient boot-time failure never downgrades a working https setup.
+    if (config.signalkUrl) {
+      sessionEndpoint = resolveSignalkEndpoint(config);
+    } else {
+      const result = await probeSignalkEndpoint({
+        httpPort: Number(process.env.PORT) || 3000,
+        dataDir,
+        log: (msg) => app.debug(msg),
+      });
+      sessionEndpoint = probeResultToEndpoint(
+        result,
+        readLastGoodEndpoint(dataDir),
+      );
+      app.debug(
+        `Signal K endpoint: ${sessionEndpoint.ssl ? "https" : "http"}://${sessionEndpoint.host}` +
+          ` (tlsSkipVerify=${sessionEndpoint.tlsSkipVerify}, conclusive=${result.conclusive})`,
+      );
+      if (!result.conclusive && result.scheme === "https") {
+        app.setPluginStatus(
+          "Detected an https Signal K server but could not confirm a reachable " +
+            "port. If the Grafana datasource is unreachable, set the plugin's " +
+            "Signal K server URL override (e.g. https://192.168.0.122:443).",
+        );
+      }
+    }
+    if (sessionEndpoint.ssl) writeLastGoodEndpoint(dataDir, sessionEndpoint);
+
     app.setPluginStatus("Generating Grafana provisioning...");
     // If a token from a prior session is cached, thread it into the
     // initial provisioning so the datasource has auth from the very
     // first container start. New installs on secured SK fall back to
     // the background request flow below.
     const initialToken = readCachedToken(dataDir);
-    generateProvisioning(dataDir, config, initialToken);
+    generateProvisioning(dataDir, config, initialToken, sessionEndpoint);
 
     // Fix permissions on grafana-data from previous runs with different UID mappings.
     // podman unshare enters the user namespace where the mapped UIDs are accessible.
@@ -167,12 +267,11 @@ module.exports = (app: App) => {
       config,
     );
 
-    const configHash = JSON.stringify({
-      tag: containerConfig.tag,
-      ports: containerConfig.ports,
-      env: containerConfig.env,
-      networkMode: containerConfig.networkMode,
-    });
+    // Fold the datasource YAML content into the recreate hash: the container
+    // env/ports don't change when only the scheme/port/tlsSkipVerify changes,
+    // and Grafana reads provisioning only at boot, so a YAML-only change must
+    // still force exactly one recreate.
+    const configHash = computeConfigHash(containerConfig, dataDir);
     const hashFile = `${dataDir}.container-hash`;
     let lastHash = "";
     try {
@@ -338,7 +437,12 @@ module.exports = (app: App) => {
     config: Config,
     token: string,
   ): Promise<void> {
-    generateProvisioning(dataDir, config, token);
+    // Reuse the endpoint resolved at start so the auth recreate can't silently
+    // revert a probed https/tlsSkipVerify connection back to the http default.
+    const endpoint =
+      sessionEndpoint ??
+      (config.signalkUrl ? resolveSignalkEndpoint(config) : undefined);
+    generateProvisioning(dataDir, config, token, endpoint ?? undefined);
     await containers.remove(CONTAINER_NAME);
     const containerConfig = await buildContainerConfig(
       containers,
@@ -346,6 +450,12 @@ module.exports = (app: App) => {
       config,
     );
     await containers.ensureRunning(CONTAINER_NAME, containerConfig);
+    // Keep the recreate hash in step with the just-written YAML so the next
+    // asyncStart doesn't see a stale hash and recreate a second time.
+    writeFileSync(
+      `${dataDir}.container-hash`,
+      computeConfigHash(containerConfig, dataDir),
+    );
   }
 
   // WHY: app.getDataDirPath() is SK-container-internal when SK runs in a
@@ -426,6 +536,7 @@ module.exports = (app: App) => {
         }
       }
       currentConfig = null;
+      sessionEndpoint = null;
     },
 
     registerWithRouter(router: IRouter) {

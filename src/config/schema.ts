@@ -39,8 +39,17 @@ export const ConfigSchema = Type.Object({
     default: "",
     title: "Signal K server URL override",
     description:
-      "Auto-detected from PORT env var. Only set to override (e.g. http://192.168.0.122:3000).",
+      "Auto-detected on startup (scheme, port, and self-signed TLS). Only set to override " +
+      "(e.g. https://192.168.0.122:443).",
   }),
+  tlsSkipVerify: Type.Optional(
+    Type.Boolean({
+      title: "Skip TLS certificate verification",
+      description:
+        "Only applies with a Signal K server URL override that uses https with a self-signed " +
+        "certificate. The auto-detected connection handles this on its own.",
+    }),
+  ),
   subPath: Type.String({
     default: "",
     title: "Sub-path (reverse proxy)",

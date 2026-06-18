@@ -183,6 +183,93 @@ describe("generateProvisioning", () => {
     );
   });
 
+  it("emits tlsSkipVerify when the probed endpoint is self-signed https", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "grafana-test-"));
+    generateProvisioning(tempDir, defaultConfig, undefined, {
+      host: "host.containers.internal:443",
+      ssl: true,
+      tlsSkipVerify: true,
+    });
+
+    const content = readFileSync(
+      join(tempDir, "provisioning/datasources/signalk.yaml"),
+      "utf8",
+    );
+    assert.ok(content.includes("url: https://host.containers.internal:443"));
+    assert.ok(content.includes("ssl: true"));
+    assert.ok(
+      content.includes("      tlsSkipVerify: true\n"),
+      "tlsSkipVerify must be 6-space indented under jsonData",
+    );
+  });
+
+  it("omits tlsSkipVerify when the probed endpoint does not need it", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "grafana-test-"));
+    generateProvisioning(tempDir, defaultConfig, undefined, {
+      host: "host.containers.internal:443",
+      ssl: true,
+      tlsSkipVerify: false,
+    });
+
+    const content = readFileSync(
+      join(tempDir, "provisioning/datasources/signalk.yaml"),
+      "utf8",
+    );
+    assert.ok(content.includes("ssl: true"));
+    assert.ok(!content.includes("tlsSkipVerify"));
+  });
+
+  it("lets a signalkUrl override win over a probed endpoint", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "grafana-test-"));
+    generateProvisioning(
+      tempDir,
+      { ...defaultConfig, signalkUrl: "http://192.168.0.122:3000" },
+      undefined,
+      { host: "host.containers.internal:443", ssl: true, tlsSkipVerify: true },
+    );
+
+    const content = readFileSync(
+      join(tempDir, "provisioning/datasources/signalk.yaml"),
+      "utf8",
+    );
+    assert.ok(content.includes("url: http://192.168.0.122:3000"));
+    assert.ok(content.includes("ssl: false"));
+    assert.ok(!content.includes("tlsSkipVerify"));
+  });
+
+  it("emits tlsSkipVerify for an https override when config opts in", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "grafana-test-"));
+    generateProvisioning(tempDir, {
+      ...defaultConfig,
+      signalkUrl: "https://192.168.0.122:443",
+      tlsSkipVerify: true,
+    });
+
+    // URL.host strips default :443 for https; datasource defaults to 443 anyway.
+    const content = readFileSync(
+      join(tempDir, "provisioning/datasources/signalk.yaml"),
+      "utf8",
+    );
+    assert.ok(content.includes("url: https://192.168.0.122"));
+    assert.ok(content.includes("ssl: true"));
+    assert.ok(content.includes("      tlsSkipVerify: true\n"));
+  });
+
+  it("does not emit tlsSkipVerify for an https override without opt-in", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "grafana-test-"));
+    generateProvisioning(tempDir, {
+      ...defaultConfig,
+      signalkUrl: "https://192.168.0.122:8443",
+    });
+
+    const content = readFileSync(
+      join(tempDir, "provisioning/datasources/signalk.yaml"),
+      "utf8",
+    );
+    assert.ok(content.includes("ssl: true"));
+    assert.ok(!content.includes("tlsSkipVerify"));
+  });
+
   it("rejects tokens that don't match the JWT shape", () => {
     // The YAML is built as a string template; refusing malformed input
     // at this layer protects against future yaml-injection if a caller
