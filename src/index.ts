@@ -27,6 +27,10 @@ interface App {
   setPluginStatus: (msg: string) => void;
   setPluginError: (msg: string) => void;
   getDataDirPath: () => string;
+  savePluginOptions?: (
+    options: object,
+    cb: (err: NodeJS.ErrnoException | null) => void,
+  ) => void;
   [key: string]: unknown;
 }
 
@@ -458,15 +462,12 @@ module.exports = (app: App) => {
             error?: string;
           } = { reachable: false };
           try {
-            const auth =
-              "Basic " +
-              Buffer.from(
-                `admin:${currentConfig.adminPassword ?? "admin"}`,
-              ).toString("base64");
+            // WHY no auth: the anonymous Viewer suffices, and authenticating
+            // this 5s poll with a stale password tripped Grafana's brute-force
+            // lockout.
             const dsRes = await fetch(
               `${grafanaUrl}/api/datasources/name/Signal%20K`,
               {
-                headers: { Authorization: auth },
                 signal: AbortSignal.timeout(3000),
               },
             );
@@ -486,7 +487,6 @@ module.exports = (app: App) => {
                 const skRes = await fetch(
                   `${grafanaUrl}/api/datasources/proxy/uid/${encodeURIComponent(ds.uid)}/signalk`,
                   {
-                    headers: { Authorization: auth },
                     signal: AbortSignal.timeout(3000),
                   },
                 );
@@ -786,22 +786,55 @@ module.exports = (app: App) => {
             password,
           ]);
 
-          if (result.exitCode === 0) {
-            // Keep currentConfig in sync so /api/status's Signal K probe
-            // (which authenticates with admin:currentConfig.adminPassword)
-            // doesn't 401 until the next plugin restart.
-            if (currentConfig) {
-              currentConfig.adminPassword = password;
-            }
-            res.json({
-              status: "ok",
-              message: "Admin password updated.",
-            });
-          } else {
+          if (result.exitCode !== 0) {
             res.status(500).json({
               error: result.stderr || "Failed to set password",
             });
+            return;
           }
+
+          if (!currentConfig) {
+            // Plugin stopped mid-request: the live container password changed
+            // but there is no full config to persist, and writing a one-field
+            // object would wipe every other saved option.
+            res.json({
+              status: "ok",
+              message:
+                "Admin password updated on the running container, but the plugin " +
+                "config was unavailable to save it — it may revert on restart.",
+            });
+            return;
+          }
+
+          currentConfig.adminPassword = password;
+          // Persist to saved config: asyncStart re-applies config.adminPassword
+          // on every start, so without this the change reverts on the next
+          // restart or container recreate. Merge over currentConfig so no other
+          // field is dropped.
+          const savedConfig = currentConfig;
+          const persisted = await new Promise<string | null>((resolve) => {
+            if (typeof app.savePluginOptions !== "function") {
+              resolve("savePluginOptions unavailable");
+              return;
+            }
+            app.savePluginOptions(
+              { ...savedConfig, adminPassword: password },
+              (err) => resolve(err ? err.message : null),
+            );
+          });
+          if (persisted) {
+            app.error(`Failed to persist admin password: ${persisted}`);
+            res.status(500).json({
+              error: `Password set on the running container but could not be saved: ${persisted}. It may revert on restart.`,
+            });
+            return;
+          }
+          res.json({
+            status: "ok",
+            message:
+              "Admin password updated. If a login still fails, wait ~5 min — " +
+              "Grafana temporarily blocks logins after repeated failed attempts.",
+          });
         } catch (err) {
           res.status(500).json({
             error: err instanceof Error ? err.message : "Unknown error",

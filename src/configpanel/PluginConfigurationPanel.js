@@ -474,7 +474,7 @@ export default function PluginConfigurationPanel({ configuration, save }) {
             }
           }}
         >
-          Set
+          Set &amp; Save
         </button>
       </div>
 
