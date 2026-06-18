@@ -6,12 +6,10 @@ import { SignalkEndpoint } from "./provisioning";
 
 const DATASOURCE_HOST = "host.containers.internal";
 const REQUEST_TIMEOUT_MS = 2000;
-// Separate listeners (http :80 redirector, https :443) can come up at
-// different times during SK boot; a few short retries ride out the gap.
+// Retry delays ride out the SK-boot gap between the http and https listeners.
 const CONNECT_RETRY_DELAYS_MS = [0, 500, 1000, 2000];
 
-// rejectUnauthorized=false succeeds but flags the cert as untrusted; we
-// classify these to report selfSigned and to decide the strict→lax fallback.
+// Cert errors that mean "reachable but untrusted" — drive the strict→lax fallback.
 const CERT_ERROR_CODES = new Set([
   "SELF_SIGNED_CERT_IN_CHAIN",
   "DEPTH_ZERO_SELF_SIGNED_CERT",
@@ -104,9 +102,8 @@ function nodeGet(
   });
 }
 
-// node:http(s).request, not fetch: fetch auto-follows the 302 from SK's http
-// redirector and masks the very signal we need; undici's Agent is not
-// requireable here so rejectUnauthorized can only be set via node:https.
+// WHY node:http(s) not fetch: fetch auto-follows the 302 and masks the redirect,
+// and rejectUnauthorized is only settable via node:https here.
 export function realTransports(): ProbeTransports {
   return {
     httpGet: (port, path) => nodeGet(false, true, port, path),
@@ -140,9 +137,8 @@ function locationPort(location: string | undefined): number | undefined {
 }
 
 function readSslportFromSettings(dataDir: string): number | undefined {
-  // dataDir is the plugin's data dir (<sk>/plugin-config-data/signalk-grafana);
-  // SK's settings.json sits two levels up. Read is best-effort: a wrong/in-
-  // container path just falls through to the 443 default.
+  // WHY best-effort: SK's settings.json sits a couple levels above the plugin
+  // data dir; a wrong/in-container path just falls through to the 443 default.
   const candidates = [
     join(dataDir, "..", "..", "settings.json"),
     join(dataDir, "..", "..", "..", "settings.json"),
@@ -162,9 +158,8 @@ function readSslportFromSettings(dataDir: string): number | undefined {
   return undefined;
 }
 
-// Two-pass https GET: strict first (clean cert → selfSigned=false), then lax
-// on a cert-family error (untrusted but reachable → selfSigned=true). Returns
-// null when the port isn't a reachable https endpoint at all.
+// Two-pass https GET: strict (clean cert), then lax on a cert error (untrusted
+// but reachable); null when the port is not a reachable https endpoint.
 async function confirmHttps(
   t: ProbeTransports,
   port: number,

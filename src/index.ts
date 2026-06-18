@@ -442,7 +442,7 @@ module.exports = (app: App) => {
     const endpoint =
       sessionEndpoint ??
       (config.signalkUrl ? resolveSignalkEndpoint(config) : undefined);
-    generateProvisioning(dataDir, config, token, endpoint ?? undefined);
+    generateProvisioning(dataDir, config, token, endpoint);
     await containers.remove(CONTAINER_NAME);
     const containerConfig = await buildContainerConfig(
       containers,
