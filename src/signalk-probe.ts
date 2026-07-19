@@ -56,6 +56,20 @@ function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// WHY PORT env wins: it reflects how the server was actually launched; the settings port covers env-less installs on nonstandard ports.
+export function resolveProbeHttpPort(
+  envPort: string | undefined,
+  settingsPort: unknown,
+): number {
+  const isValidPort = (port: number) =>
+    Number.isInteger(port) && port > 0 && port <= 65535;
+  const fromEnv = Number(envPort);
+  if (isValidPort(fromEnv)) return fromEnv;
+  const fromSettings = Number(settingsPort);
+  if (isValidPort(fromSettings)) return fromSettings;
+  return 3000;
+}
+
 function isDiscoveryDoc(body: string): boolean {
   // SK's /signalk root returns an endpoints document; matching the literal
   // key avoids treating a captive-portal/200-OK page as a real SK server.
