@@ -6,6 +6,7 @@ import {
   ProbeTransports,
   probeResultToEndpoint,
   probeSignalkEndpoint,
+  resolveProbeHttpPort,
 } from "../signalk-probe";
 
 const DISCOVERY = JSON.stringify({
@@ -216,5 +217,32 @@ describe("probeResultToEndpoint", () => {
     });
     assert.equal(ep.ssl, false);
     assert.equal(ep.host, "host.containers.internal:3000");
+  });
+});
+
+describe("resolveProbeHttpPort", () => {
+  it("prefers a valid PORT env value", () => {
+    assert.equal(resolveProbeHttpPort("80", 8080), 80);
+  });
+
+  it("falls back to the server settings port when PORT is unset", () => {
+    assert.equal(resolveProbeHttpPort(undefined, 80), 80);
+  });
+
+  it("falls back to the settings port when PORT is garbage", () => {
+    assert.equal(resolveProbeHttpPort("abc", 8080), 8080);
+  });
+
+  it("rejects ports above 65535 at each fallback level", () => {
+    assert.equal(resolveProbeHttpPort("65536", 8080), 8080);
+    assert.equal(resolveProbeHttpPort(undefined, 65536), 3000);
+    assert.equal(resolveProbeHttpPort("65535", 8080), 65535);
+  });
+
+  it("defaults to 3000 when neither source is usable", () => {
+    assert.equal(resolveProbeHttpPort(undefined, undefined), 3000);
+    assert.equal(resolveProbeHttpPort("", "not-a-port"), 3000);
+    assert.equal(resolveProbeHttpPort("-1", 0), 3000);
+    assert.equal(resolveProbeHttpPort("3000.5", null), 3000);
   });
 });
