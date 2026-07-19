@@ -320,12 +320,16 @@ module.exports = (app: App) => {
 
     const grafanaUrl = `http://127.0.0.1:${config.grafanaPort}`;
     const healthDeadline = Date.now() + 30000;
+    let healthy = false;
     while (Date.now() < healthDeadline) {
       try {
         const res = await fetch(`${grafanaUrl}/api/health`, {
           signal: AbortSignal.timeout(2000),
         });
-        if (res.ok) break;
+        if (res.ok) {
+          healthy = true;
+          break;
+        }
       } catch {
         // not ready yet
       }
@@ -345,7 +349,13 @@ module.exports = (app: App) => {
       app.debug("could not set admin password");
     }
 
-    app.setPluginStatus(`Grafana running at port ${config.grafanaPort}`);
+    if (healthy) {
+      app.setPluginStatus(`Grafana running at port ${config.grafanaPort}`);
+    } else {
+      app.setPluginStatus(
+        `Grafana container started but not responding on port ${config.grafanaPort} — check container logs`,
+      );
+    }
 
     // Background: if SK security is enabled and we don't already have a
     // cached token, drive the device-access-request flow. On approval,
@@ -521,8 +531,9 @@ module.exports = (app: App) => {
         GF_SECURITY_ADMIN_PASSWORD: config.adminPassword ?? "admin",
         GF_AUTH_ANONYMOUS_ENABLED: String(config.anonymousAccess ?? true),
         GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer",
-        GF_FEATURE_TOGGLES_DISABLE: "backgroundPluginInstaller",
-        GF_INSTALL_PLUGINS: "tkurki-signalk-datasource",
+        // Async on purpose — the sync install variants are fatal at startup
+        // in Grafana >= 13 and crash-loop the container offline (AGENTS.md).
+        GF_PLUGINS_PREINSTALL: "tkurki-signalk-datasource",
         GF_SECURITY_ALLOW_EMBEDDING: "true",
         ...(config.subPath
           ? {
@@ -843,8 +854,7 @@ module.exports = (app: App) => {
                 currentConfig?.anonymousAccess ?? true,
               ),
               GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer",
-              GF_FEATURE_TOGGLES_DISABLE: "backgroundPluginInstaller",
-              GF_INSTALL_PLUGINS: "tkurki-signalk-datasource",
+              GF_PLUGINS_PREINSTALL: "tkurki-signalk-datasource",
               GF_SECURITY_ALLOW_EMBEDDING: "true",
               ...(currentConfig?.subPath
                 ? {
