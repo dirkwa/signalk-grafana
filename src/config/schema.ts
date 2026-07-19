@@ -10,6 +10,10 @@ export const ConfigSchema = Type.Object({
   grafanaVersion: Type.String({
     default: "latest",
     title: "Grafana image version",
+    description:
+      "Versions below 11.3 do not support background plugin preinstall " +
+      "(GF_PLUGINS_PREINSTALL); when pinning one, install the Signal K " +
+      "datasource plugin manually.",
   }),
   adminPassword: Type.String({
     default: "admin",
