@@ -54,6 +54,11 @@ describe("generateProvisioning", () => {
     assert.ok(content.includes("server: sk-signalk-questdb"));
     assert.ok(content.includes("port: 8812"));
     assert.ok(content.includes("tlsMode: disable"));
+    assert.ok(content.includes("username: admin"));
+    assert.ok(content.includes("password: quest"));
+    assert.ok(content.includes("maxOpenConnections: 8"));
+    assert.ok(content.includes("maxIdleConnections: 2"));
+    assert.ok(content.includes("maxConnectionLifetime: 14400"));
     // Exactly one default — the native entry; postgres stays for old dashboards.
     assert.equal((content.match(/isDefault: true/g) || []).length, 1);
     assert.ok(

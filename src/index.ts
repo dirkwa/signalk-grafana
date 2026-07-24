@@ -33,8 +33,7 @@ import {
 
 const PLUGIN_ID = "signalk-grafana";
 const CONTAINER_NAME = "signalk-grafana";
-// Shared by start AND /api/update/apply — both build the container env, and a
-// list that drifts between them drops a datasource plugin on one-click update.
+// Shared by start and /api/update/apply so the plugin list can't drift and drop a datasource plugin on one-click update.
 const GRAFANA_PREINSTALL_PLUGINS =
   "tkurki-signalk-datasource,questdb-questdb-datasource";
 

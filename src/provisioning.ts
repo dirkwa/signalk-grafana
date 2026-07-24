@@ -57,8 +57,7 @@ export function generateProvisioning(
 
   const questdbHost = `sk-${config.questdbContainerName}`;
 
-  // Native plugin is default (the Postgres builder can't list QuestDB tables); the
-  // postgres entry keeps its name+uid for existing dashboards — renames collide uids.
+  // Native plugin is default (Postgres builder can't list QuestDB tables); postgres entry keeps name+uid for existing dashboards, renames collide uids.
   const questdbYaml = `apiVersion: 1
 datasources:
   - name: QuestDB (native)

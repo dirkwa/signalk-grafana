@@ -21,11 +21,11 @@ Runs Grafana in a container (via [signalk-container](https://github.com/dirkwa/s
 
 1. Plugin creates a Podman/Docker network (`sk-network`)
 2. Starts Grafana container on the network
-3. Auto-provisions two QuestDB datasources over container DNS `sk-signalk-questdb:8812`: **QuestDB (native)** (official QuestDB plugin, the default) and **QuestDB** (PostgreSQL-wire, kept so dashboards built against it keep working)
+3. Auto-provisions two QuestDB datasources over container DNS (`sk-<QuestDB container>:<PostgreSQL port>`, default `sk-signalk-questdb:8812`): **QuestDB (native)** (official QuestDB plugin, the default) and **QuestDB** (PostgreSQL-wire, kept so dashboards built against it keep working)
 4. Auto-provisions Signal K datasource (connects via `host.containers.internal`)
 5. Sets admin password on every startup to match config
 
-QuestDB must also be on `sk-network` -- set **Container network** to `sk-network` in the QuestDB plugin config.
+Both plugins must share the same **Container network** (default `sk-network`), and the **QuestDB container** setting here must match the container name configured in the QuestDB plugin.
 
 ## Example Queries
 
