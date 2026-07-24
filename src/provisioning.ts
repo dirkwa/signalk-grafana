@@ -57,15 +57,8 @@ export function generateProvisioning(
 
   const questdbHost = `sk-${config.questdbContainerName}`;
 
-  // Two QuestDB datasources on the same PG-wire port. The official QuestDB
-  // plugin is the default: Grafana's generic Postgres query builder cannot
-  // list QuestDB tables (its information_schema introspection comes back
-  // empty), while the QuestDB editor introspects correctly and understands
-  // SAMPLE BY. The postgres-type entry stays under its original name and uid
-  // so dashboards built against it keep working — renaming it would make
-  // provisioning insert a second record with a colliding uid.
-  // Small connection pool: QuestDB on boat hardware runs a single shared
-  // worker, so a large idle pool just occupies it.
+  // Native plugin is default (the Postgres builder can't list QuestDB tables); the
+  // postgres entry keeps its name+uid for existing dashboards — renames collide uids.
   const questdbYaml = `apiVersion: 1
 datasources:
   - name: QuestDB (native)

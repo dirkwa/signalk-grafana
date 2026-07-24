@@ -54,8 +54,7 @@ describe("generateProvisioning", () => {
     assert.ok(content.includes("server: sk-signalk-questdb"));
     assert.ok(content.includes("port: 8812"));
     assert.ok(content.includes("tlsMode: disable"));
-    // Exactly one default, and it is the native entry — the postgres one
-    // stays only for pre-existing dashboards.
+    // Exactly one default — the native entry; postgres stays for old dashboards.
     assert.equal((content.match(/isDefault: true/g) || []).length, 1);
     assert.ok(
       content.indexOf("isDefault: true") <

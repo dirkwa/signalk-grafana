@@ -38,7 +38,7 @@ SELECT ts AS "time", avg(value) * 1.94384 AS "SOG"
 FROM signalk
 WHERE path = 'navigation.speedOverGround'
   AND context = 'self'
-  AND ts >= $__timeFrom() AND ts <= $__timeTo()
+  AND $__timeFilter(ts)
 SAMPLE BY 10s
 ```
 
@@ -50,7 +50,7 @@ SELECT ts AS "time",
 FROM signalk
 WHERE path = 'environment.wind.speedApparent'
   AND context = 'self'
-  AND ts >= $__timeFrom() AND ts <= $__timeTo()
+  AND $__timeFilter(ts)
 SAMPLE BY 10s
 ```
 
@@ -61,7 +61,7 @@ SELECT ts AS "time", avg(value) AS "Voltage"
 FROM signalk
 WHERE path LIKE 'electrical.batteries.%.voltage'
   AND context = 'self'
-  AND ts >= $__timeFrom() AND ts <= $__timeTo()
+  AND $__timeFilter(ts)
 SAMPLE BY 10s
 ```
 
@@ -72,7 +72,7 @@ SELECT ts AS "time", avg(value) * 60 AS "RPM"
 FROM signalk
 WHERE path LIKE 'propulsion.%.revolutions'
   AND context = 'self'
-  AND ts >= $__timeFrom() AND ts <= $__timeTo()
+  AND $__timeFilter(ts)
 SAMPLE BY 10s
 ```
 
@@ -83,7 +83,7 @@ SELECT ts AS "time", avg(value) - 273.15 AS "Temp"
 FROM signalk
 WHERE path = 'environment.water.temperature'
   AND context = 'self'
-  AND ts >= $__timeFrom() AND ts <= $__timeTo()
+  AND $__timeFilter(ts)
 SAMPLE BY 10s
 ```
 
@@ -102,12 +102,14 @@ Signal K stores values in SI units. Common conversions for Grafana:
 
 ### Grafana Macros
 
-Use these Grafana PostgreSQL macros in your queries:
+`$__timeFilter(ts)` (the dashboard time-range condition) works in both QuestDB datasources. The other macros differ per datasource type:
 
-| Macro           | Expands to                   |
-| --------------- | ---------------------------- |
-| `$__timeFrom()` | Start of selected time range |
-| `$__timeTo()`   | End of selected time range   |
+| Macro                           | Datasource         | Expands to                              |
+| ------------------------------- | ------------------ | --------------------------------------- |
+| `$__timeFilter(ts)`             | both               | Time-range condition on the `ts` column |
+| `$__fromTime` / `$__toTime`     | QuestDB (native)   | Range start / end as timestamps         |
+| `$__sampleByInterval`           | QuestDB (native)   | Panel interval for `SAMPLE BY`          |
+| `$__timeFrom()` / `$__timeTo()` | QuestDB (Postgres) | Range start / end                       |
 
 QuestDB's `SAMPLE BY` handles time bucketing (e.g., `SAMPLE BY 10s`, `SAMPLE BY 1m`, `SAMPLE BY 1h`).
 
