@@ -33,6 +33,9 @@ import {
 
 const PLUGIN_ID = "signalk-grafana";
 const CONTAINER_NAME = "signalk-grafana";
+// Shared by start and /api/update/apply so the plugin list can't drift and drop a datasource plugin on one-click update.
+const GRAFANA_PREINSTALL_PLUGINS =
+  "tkurki-signalk-datasource,questdb-questdb-datasource";
 
 interface App {
   debug: (...args: unknown[]) => void;
@@ -583,7 +586,7 @@ module.exports = (app: App) => {
         GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer",
         // Async on purpose — the sync install variants are fatal at startup
         // in Grafana >= 13 and crash-loop the container offline (AGENTS.md).
-        GF_PLUGINS_PREINSTALL: "tkurki-signalk-datasource",
+        GF_PLUGINS_PREINSTALL: GRAFANA_PREINSTALL_PLUGINS,
         GF_SECURITY_ALLOW_EMBEDDING: "true",
         ...(config.subPath
           ? {
@@ -838,7 +841,7 @@ module.exports = (app: App) => {
                 currentConfig?.anonymousAccess ?? true,
               ),
               GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer",
-              GF_PLUGINS_PREINSTALL: "tkurki-signalk-datasource",
+              GF_PLUGINS_PREINSTALL: GRAFANA_PREINSTALL_PLUGINS,
               GF_SECURITY_ALLOW_EMBEDDING: "true",
               ...(currentConfig?.subPath
                 ? {

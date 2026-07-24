@@ -57,8 +57,25 @@ export function generateProvisioning(
 
   const questdbHost = `sk-${config.questdbContainerName}`;
 
+  // Native plugin is default (Postgres builder can't list QuestDB tables); postgres entry keeps name+uid for existing dashboards, renames collide uids.
   const questdbYaml = `apiVersion: 1
 datasources:
+  - name: QuestDB (native)
+    uid: signalk-questdb-native
+    type: questdb-questdb-datasource
+    access: proxy
+    isDefault: true
+    editable: true
+    jsonData:
+      server: ${questdbHost}
+      port: ${config.questdbPgPort}
+      username: admin
+      tlsMode: disable
+      maxOpenConnections: 8
+      maxIdleConnections: 2
+      maxConnectionLifetime: 14400
+    secureJsonData:
+      password: quest
   - name: QuestDB
     uid: signalk-questdb
     type: grafana-postgresql-datasource
@@ -66,7 +83,7 @@ datasources:
     user: admin
     database: qdb
     access: proxy
-    isDefault: true
+    isDefault: false
     editable: true
     jsonData:
       sslmode: disable
