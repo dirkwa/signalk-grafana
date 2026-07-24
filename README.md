@@ -7,9 +7,9 @@ Runs Grafana in a container (via [signalk-container](https://github.com/dirkwa/s
 ## Features
 
 - **Zero-config Grafana** -- container managed automatically, no manual setup
-- **Auto-provisioned datasources** -- QuestDB (PostgreSQL) and Signal K datasources configured automatically
+- **Auto-provisioned datasources** -- QuestDB (native + PostgreSQL) and Signal K datasources configured automatically
 - **Shared container network** -- Grafana and QuestDB communicate on a private Podman/Docker network
-- **Table auto-discovery** -- QuestDB supports `information_schema`, Grafana query builder works
+- **QuestDB-native query editor** -- the official QuestDB datasource plugin is provisioned as the default, with working table introspection and a `SAMPLE BY`-aware editor (Grafana's generic PostgreSQL query builder cannot list QuestDB tables)
 - **Anonymous access** -- view dashboards without login (configurable)
 - **Live reachability** -- config panel shows whether Grafana can actually reach your Signal K server
 - **One-click update** -- check for new Grafana versions and update from the config panel
@@ -21,7 +21,7 @@ Runs Grafana in a container (via [signalk-container](https://github.com/dirkwa/s
 
 1. Plugin creates a Podman/Docker network (`sk-network`)
 2. Starts Grafana container on the network
-3. Auto-provisions QuestDB datasource (connects via container DNS `sk-signalk-questdb:8812`)
+3. Auto-provisions two QuestDB datasources over container DNS `sk-signalk-questdb:8812`: **QuestDB (native)** (official QuestDB plugin, the default) and **QuestDB** (PostgreSQL-wire, kept so dashboards built against it keep working)
 4. Auto-provisions Signal K datasource (connects via `host.containers.internal`)
 5. Sets admin password on every startup to match config
 
@@ -29,7 +29,7 @@ QuestDB must also be on `sk-network` -- set **Container network** to `sk-network
 
 ## Example Queries
 
-Create dashboards in Grafana using the **QuestDB** datasource with raw SQL. QuestDB uses `SAMPLE BY` for time bucketing:
+Create dashboards in Grafana using the **QuestDB (native)** datasource -- its query builder lists the tables, and the SQL below works in its code editor as well as in the legacy **QuestDB** (PostgreSQL) datasource. QuestDB uses `SAMPLE BY` for time bucketing:
 
 **Speed Over Ground (knots):**
 

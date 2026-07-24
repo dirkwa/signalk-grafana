@@ -583,7 +583,8 @@ module.exports = (app: App) => {
         GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer",
         // Async on purpose — the sync install variants are fatal at startup
         // in Grafana >= 13 and crash-loop the container offline (AGENTS.md).
-        GF_PLUGINS_PREINSTALL: "tkurki-signalk-datasource",
+        GF_PLUGINS_PREINSTALL:
+          "tkurki-signalk-datasource,questdb-questdb-datasource",
         GF_SECURITY_ALLOW_EMBEDDING: "true",
         ...(config.subPath
           ? {

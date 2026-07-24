@@ -41,6 +41,29 @@ describe("generateProvisioning", () => {
     assert.ok(content.includes("sslmode: disable"));
   });
 
+  it("provisions the native QuestDB datasource as the default", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "grafana-test-"));
+    generateProvisioning(tempDir, defaultConfig);
+
+    const content = readFileSync(
+      join(tempDir, "provisioning/datasources/questdb.yaml"),
+      "utf8",
+    );
+    assert.ok(content.includes("type: questdb-questdb-datasource"));
+    assert.ok(content.includes("uid: signalk-questdb-native"));
+    assert.ok(content.includes("server: sk-signalk-questdb"));
+    assert.ok(content.includes("port: 8812"));
+    assert.ok(content.includes("tlsMode: disable"));
+    // Exactly one default, and it is the native entry — the postgres one
+    // stays only for pre-existing dashboards.
+    assert.equal((content.match(/isDefault: true/g) || []).length, 1);
+    assert.ok(
+      content.indexOf("isDefault: true") <
+        content.indexOf("grafana-postgresql-datasource"),
+    );
+    assert.ok(content.includes("isDefault: false"));
+  });
+
   it("creates Signal K datasource YAML using auto-detected host", () => {
     tempDir = mkdtempSync(join(tmpdir(), "grafana-test-"));
     const prevPort = process.env.PORT;
@@ -135,6 +158,8 @@ describe("generateProvisioning", () => {
       "utf8",
     );
     assert.ok(content.includes("sk-my-questdb:9999"));
+    assert.ok(content.includes("server: sk-my-questdb"));
+    assert.ok(content.includes("port: 9999"));
   });
 
   it("omits useAuth=true and secureJsonData when no token is supplied", () => {
