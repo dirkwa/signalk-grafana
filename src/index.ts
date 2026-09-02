@@ -825,6 +825,14 @@ module.exports = (app: App) => {
 
           // WHY third check: a restart racing the ensureRunning await owns the hash file and saved options now — don't clobber them with this request's state.
           if (currentConfig !== config) {
+            // WHY stop on null: our ensureRunning may have resurrected a container that stop() already stopped; after a restart the new owner keeps it.
+            if (currentConfig === null) {
+              try {
+                await containers.stop(CONTAINER_NAME);
+              } catch {
+                // already stopped or gone
+              }
+            }
             res.status(409).json({
               error:
                 "Plugin stopped or restarted during the update — apply again.",
