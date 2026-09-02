@@ -150,6 +150,7 @@ function signalkBaseFromEndpoint(
 interface RecreateInputs {
   tag: string;
   ports: Record<string, string>;
+  volumes: Record<string, string>;
   env: Record<string, string>;
   networkMode: string;
 }
@@ -175,6 +176,7 @@ function computeConfigHash(inputs: RecreateInputs, dataDir: string): string {
   return JSON.stringify({
     tag: inputs.tag,
     ports: inputs.ports,
+    volumes: inputs.volumes,
     env: inputs.env,
     networkMode: inputs.networkMode,
     provisioningHash,
