@@ -76,13 +76,11 @@ export function generateProvisioning(
   chmodSync(grafanaDataDir, 0o777);
 
   const questdbHost = resolveQuestdbHost(config);
-  // WHY conditional quoting: unquoted YAML coerces bracketed IPv6 to a flow sequence, bare ints/floats to numbers, boolean/null words to non-strings, and host:port to a 1.1 sexagesimal; ordinary hostnames stay unquoted so existing provisioning bytes (and the recreate hash) don't churn.
-  const coercible =
-    questdbHost.startsWith("[") ||
-    /^[0-9]+$/.test(questdbHost) ||
-    /^[0-9]*\.[0-9]+$/.test(questdbHost) ||
-    /^(true|false|yes|no|on|off|null)$/i.test(questdbHost);
-  const yamlHost = (v: string) => (coercible ? `"${v}"` : v);
+  // WHY allowlist quoting: YAML types too many plain scalars to blocklist (numbers in four bases, underscore/exponent forms, timestamps, boolean/null words, flow sequences, 1.1 sexagesimals). Only letter-initial hostname-shaped values that are not boolean/null words are provably safe plain — everything else is quoted. The default sk-<name> derivation is letter-initial, so existing provisioning bytes (and the recreate hash) don't churn.
+  const safePlain =
+    /^[A-Za-z][A-Za-z0-9_.-]*$/.test(questdbHost) &&
+    !/^(true|false|yes|no|on|off|null|y|n)$/i.test(questdbHost);
+  const yamlHost = (v: string) => (safePlain ? v : `"${v}"`);
 
   // Native plugin is default (Postgres builder can't list QuestDB tables); postgres entry keeps name+uid for existing dashboards, renames collide uids.
   const questdbYaml = `apiVersion: 1

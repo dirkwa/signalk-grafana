@@ -178,8 +178,9 @@ describe("generateProvisioning", () => {
       join(tempDir, "provisioning/datasources/questdb.yaml"),
       "utf8",
     );
-    assert.ok(content.includes("server: 192.168.1.50"));
-    assert.ok(content.includes("url: 192.168.1.50:8812"));
+    // Quoted: digit-initial values are outside the provably-safe plain-scalar set.
+    assert.ok(content.includes('server: "192.168.1.50"'));
+    assert.ok(content.includes('url: "192.168.1.50:8812"'));
     assert.ok(!content.includes("sk-signalk-questdb"));
   });
 
@@ -228,17 +229,36 @@ describe("generateProvisioning", () => {
     assert.ok(content.includes("server: quest_db"));
   });
 
-  it("quotes YAML-coercible host overrides", () => {
-    tempDir = mkdtempSync(join(tmpdir(), "grafana-test-"));
-    generateProvisioning(tempDir, { ...defaultConfig, questdbHost: "123" });
-
-    const content = readFileSync(
-      join(tempDir, "provisioning/datasources/questdb.yaml"),
-      "utf8",
-    );
-    // Unquoted, YAML would coerce 123 to a number and 123:8812 to a 1.1 sexagesimal.
-    assert.ok(content.includes('server: "123"'));
-    assert.ok(content.includes('url: "123:8812"'));
+  it("quotes YAML-typable host overrides", () => {
+    // Unquoted, YAML would type these as int, sexagesimal, timestamp, hex,
+    // underscore-int, exponent float, or boolean.
+    for (const coercible of [
+      "123",
+      "2024-01-01",
+      "0x10",
+      "1_000",
+      "1e5",
+      "no",
+    ]) {
+      tempDir = mkdtempSync(join(tmpdir(), "grafana-test-"));
+      generateProvisioning(tempDir, {
+        ...defaultConfig,
+        questdbHost: coercible,
+      });
+      const content = readFileSync(
+        join(tempDir, "provisioning/datasources/questdb.yaml"),
+        "utf8",
+      );
+      assert.ok(
+        content.includes(`server: "${coercible}"`),
+        `${coercible} must be quoted`,
+      );
+      assert.ok(
+        content.includes(`url: "${coercible}:8812"`),
+        `${coercible} url must be quoted`,
+      );
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("derives the managed container DNS name when the override is empty", () => {
