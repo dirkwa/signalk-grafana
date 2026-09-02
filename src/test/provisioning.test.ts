@@ -11,6 +11,7 @@ const defaultConfig = {
   adminPassword: "admin",
   anonymousAccess: true,
   questdbContainerName: "signalk-questdb",
+  questdbHost: "",
   questdbPgPort: 8812,
   networkName: "sk-network",
   signalkUrl: "",
@@ -164,6 +165,80 @@ describe("generateProvisioning", () => {
     assert.ok(content.includes("sk-my-questdb:9999"));
     assert.ok(content.includes("server: sk-my-questdb"));
     assert.ok(content.includes("port: 9999"));
+  });
+
+  it("uses the QuestDB host override in both datasource entries", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "grafana-test-"));
+    generateProvisioning(tempDir, {
+      ...defaultConfig,
+      questdbHost: " 192.168.1.50 ",
+    });
+
+    const content = readFileSync(
+      join(tempDir, "provisioning/datasources/questdb.yaml"),
+      "utf8",
+    );
+    assert.ok(content.includes("server: 192.168.1.50"));
+    assert.ok(content.includes("url: 192.168.1.50:8812"));
+    assert.ok(!content.includes("sk-signalk-questdb"));
+  });
+
+  it("accepts a bracketed IPv6 host override", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "grafana-test-"));
+    generateProvisioning(tempDir, {
+      ...defaultConfig,
+      questdbHost: "[fd00::10]",
+    });
+
+    const content = readFileSync(
+      join(tempDir, "provisioning/datasources/questdb.yaml"),
+      "utf8",
+    );
+    // Quoted: unquoted bracketed literals parse as YAML flow sequences.
+    assert.ok(content.includes('server: "[fd00::10]"'));
+    assert.ok(content.includes('url: "[fd00::10]:8812"'));
+  });
+
+  it("quotes YAML-coercible host overrides", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "grafana-test-"));
+    generateProvisioning(tempDir, { ...defaultConfig, questdbHost: "123" });
+
+    const content = readFileSync(
+      join(tempDir, "provisioning/datasources/questdb.yaml"),
+      "utf8",
+    );
+    // Unquoted, YAML would coerce 123 to a number and 123:8812 to a 1.1 sexagesimal.
+    assert.ok(content.includes('server: "123"'));
+    assert.ok(content.includes('url: "123:8812"'));
+  });
+
+  it("derives the managed container DNS name when the override is empty", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "grafana-test-"));
+    generateProvisioning(tempDir, { ...defaultConfig, questdbHost: "   " });
+
+    const content = readFileSync(
+      join(tempDir, "provisioning/datasources/questdb.yaml"),
+      "utf8",
+    );
+    assert.ok(content.includes("server: sk-signalk-questdb"));
+  });
+
+  it("rejects QuestDB host overrides that are not a bare host", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "grafana-test-"));
+    for (const bad of [
+      "http://192.168.1.50",
+      "192.168.1.50:8812",
+      "host name",
+      'quest"\ninjected: yes',
+      "[::::]",
+    ]) {
+      assert.throws(
+        () =>
+          generateProvisioning(tempDir, { ...defaultConfig, questdbHost: bad }),
+        /Invalid QuestDB host override/,
+        `should reject ${JSON.stringify(bad)}`,
+      );
+    }
   });
 
   it("omits useAuth=true and secureJsonData when no token is supplied", () => {

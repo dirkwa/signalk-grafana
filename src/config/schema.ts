@@ -32,6 +32,15 @@ export const ConfigSchema = Type.Object({
     title: "QuestDB container name",
     description: "Container name used by signalk-questdb (without sk- prefix)",
   }),
+  questdbHost: Type.String({
+    default: "",
+    title: "QuestDB host override",
+    description:
+      "Host Grafana uses to reach QuestDB. Leave empty for the managed " +
+      "container (sk-<QuestDB container name> on the shared network). Set a " +
+      "hostname or IP when QuestDB is self-hosted or on another network — it " +
+      "must be reachable from inside the Grafana container.",
+  }),
   questdbPgPort: Type.Number({
     default: 8812,
     title: "QuestDB PostgreSQL port",

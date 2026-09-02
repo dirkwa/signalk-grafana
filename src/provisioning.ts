@@ -1,4 +1,5 @@
 import { chmodSync, mkdirSync, writeFileSync } from "fs";
+import { isIP } from "net";
 import { join } from "path";
 import { Config } from "./config/schema";
 
@@ -40,6 +41,25 @@ export function resolveSignalkEndpoint(config: Config): SignalkEndpoint {
 // ever reaches generateProvisioning.
 const JWT_SHAPE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 
+// WHY strict shape: schemes, host:port, whitespace and YAML metacharacters must fail loudly here instead of writing a silently broken datasource YAML.
+const HOST_SHAPE =
+  /^(\[[0-9A-Fa-f:]+\]|[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?)$/;
+
+export function resolveQuestdbHost(config: Config): string {
+  const override = config.questdbHost?.trim();
+  if (!override) return `sk-${config.questdbContainerName}`;
+  const bracketedButNotIpv6 =
+    override.startsWith("[") && isIP(override.slice(1, -1)) !== 6;
+  if (!HOST_SHAPE.test(override) || bracketedButNotIpv6) {
+    throw new Error(
+      `Invalid QuestDB host override "${override}". Use a bare hostname, ` +
+        "IPv4 address, or bracketed IPv6 literal — no scheme; the port has " +
+        "its own field.",
+    );
+  }
+  return override;
+}
+
 export function generateProvisioning(
   dataDir: string,
   config: Config,
@@ -55,7 +75,14 @@ export function generateProvisioning(
   // Ensure grafana-data is world-writable so the container's grafana user (uid 472) can write
   chmodSync(grafanaDataDir, 0o777);
 
-  const questdbHost = `sk-${config.questdbContainerName}`;
+  const questdbHost = resolveQuestdbHost(config);
+  // WHY conditional quoting: unquoted YAML coerces bracketed IPv6 to a flow sequence, bare ints/floats to numbers, boolean/null words to non-strings, and host:port to a 1.1 sexagesimal; ordinary hostnames stay unquoted so existing provisioning bytes (and the recreate hash) don't churn.
+  const coercible =
+    questdbHost.startsWith("[") ||
+    /^[0-9]+$/.test(questdbHost) ||
+    /^[0-9]*\.[0-9]+$/.test(questdbHost) ||
+    /^(true|false|yes|no|on|off|null)$/i.test(questdbHost);
+  const yamlHost = (v: string) => (coercible ? `"${v}"` : v);
 
   // Native plugin is default (Postgres builder can't list QuestDB tables); postgres entry keeps name+uid for existing dashboards, renames collide uids.
   const questdbYaml = `apiVersion: 1
@@ -67,7 +94,7 @@ datasources:
     isDefault: true
     editable: true
     jsonData:
-      server: ${questdbHost}
+      server: ${yamlHost(questdbHost)}
       port: ${config.questdbPgPort}
       username: admin
       tlsMode: disable
@@ -79,7 +106,7 @@ datasources:
   - name: QuestDB
     uid: signalk-questdb
     type: grafana-postgresql-datasource
-    url: ${questdbHost}:${config.questdbPgPort}
+    url: ${yamlHost(`${questdbHost}:${config.questdbPgPort}`)}
     user: admin
     database: qdb
     access: proxy
