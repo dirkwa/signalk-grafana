@@ -199,6 +199,21 @@ describe("generateProvisioning", () => {
     assert.ok(content.includes('url: "[fd00::10]:8812"'));
   });
 
+  it("accepts container names with mid-label underscores", () => {
+    // Legacy Compose container names carry underscores and container DNS resolves them.
+    tempDir = mkdtempSync(join(tmpdir(), "grafana-test-"));
+    generateProvisioning(tempDir, {
+      ...defaultConfig,
+      questdbHost: "quest_db",
+    });
+
+    const content = readFileSync(
+      join(tempDir, "provisioning/datasources/questdb.yaml"),
+      "utf8",
+    );
+    assert.ok(content.includes("server: quest_db"));
+  });
+
   it("quotes YAML-coercible host overrides", () => {
     tempDir = mkdtempSync(join(tmpdir(), "grafana-test-"));
     generateProvisioning(tempDir, { ...defaultConfig, questdbHost: "123" });
@@ -231,6 +246,9 @@ describe("generateProvisioning", () => {
       "host name",
       'quest"\ninjected: yes',
       "[::::]",
+      "db..lan",
+      "db-.lan",
+      "-db.lan",
     ]) {
       assert.throws(
         () =>

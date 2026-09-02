@@ -41,16 +41,16 @@ export function resolveSignalkEndpoint(config: Config): SignalkEndpoint {
 // ever reaches generateProvisioning.
 const JWT_SHAPE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 
-// WHY strict shape: schemes, host:port, whitespace and YAML metacharacters must fail loudly here instead of writing a silently broken datasource YAML.
-const HOST_SHAPE =
-  /^(\[[0-9A-Fa-f:]+\]|[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?)$/;
+// WHY strict shape: schemes, host:port, whitespace, YAML metacharacters, empty labels and edge hyphens must fail loudly here instead of writing a silently broken datasource YAML. Mid-label underscores stay legal — legacy Compose container names carry them and container DNS resolves them.
+const HOST_LABEL = /^[A-Za-z0-9]([A-Za-z0-9_-]*[A-Za-z0-9])?$/;
 
 export function resolveQuestdbHost(config: Config): string {
   const override = config.questdbHost?.trim();
   if (!override) return `sk-${config.questdbContainerName}`;
-  const bracketedButNotIpv6 =
-    override.startsWith("[") && isIP(override.slice(1, -1)) !== 6;
-  if (!HOST_SHAPE.test(override) || bracketedButNotIpv6) {
+  const valid = override.startsWith("[")
+    ? /^\[[0-9A-Fa-f:]+\]$/.test(override) && isIP(override.slice(1, -1)) === 6
+    : override.split(".").every((label) => HOST_LABEL.test(label));
+  if (!valid) {
     throw new Error(
       `Invalid QuestDB host override "${override}". Use a bare hostname, ` +
         "IPv4 address, or bracketed IPv6 literal — no scheme; the port has " +
