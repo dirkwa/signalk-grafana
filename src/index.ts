@@ -796,15 +796,33 @@ module.exports = (app: App) => {
           await containers.remove("signalk-grafana");
 
           app.setPluginStatus(`Starting Grafana ${newTag}...`);
-          await containers.ensureRunning(
-            CONTAINER_NAME,
-            await buildContainerConfig(containers, app.getDataDirPath(), {
-              ...config,
-              grafanaVersion: newTag,
-            }),
+          const dataDir = app.getDataDirPath();
+          const containerConfig = await buildContainerConfig(
+            containers,
+            dataDir,
+            { ...config, grafanaVersion: newTag },
           );
+          await containers.ensureRunning(CONTAINER_NAME, containerConfig);
 
           config.grafanaVersion = newTag;
+          // Keep the recreate hash in step so the next start doesn't recreate a second time.
+          writeFileSync(
+            `${dataDir}.container-hash`,
+            computeConfigHash(containerConfig, dataDir),
+          );
+          // WHY persist: asyncStart rebuilds from saved options, so an unsaved tag reverts the update on the next plugin restart.
+          const persistErr = await new Promise<string | null>((resolve) => {
+            if (typeof app.savePluginOptions !== "function") {
+              resolve("savePluginOptions unavailable");
+              return;
+            }
+            app.savePluginOptions({ ...config }, (err) =>
+              resolve(err ? err.message : null),
+            );
+          });
+          if (persistErr) {
+            app.error(`Failed to persist Grafana version: ${persistErr}`);
+          }
 
           app.setPluginStatus(
             `Grafana ${newTag} running at port ${config.grafanaPort}`,
@@ -812,7 +830,9 @@ module.exports = (app: App) => {
           res.json({
             status: "updated",
             newVersion: newTag,
-            message: `Updated to Grafana ${newTag}. Container running.`,
+            message: persistErr
+              ? `Updated to Grafana ${newTag}. Container running, but the version could not be saved (${persistErr}) — it may revert on plugin restart.`
+              : `Updated to Grafana ${newTag}. Container running.`,
           });
         } catch (err) {
           res.status(500).json({
