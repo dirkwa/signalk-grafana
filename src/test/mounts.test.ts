@@ -8,7 +8,8 @@ import {
   shapeGrafanaMounts,
 } from "../mounts";
 
-const DATA_DIR = "/home/node/.signalk/plugin-config-data/signalk-grafana";
+// WHY /var/lib: plugin-ci rejects hardcoded /home/<user>/ paths in source files.
+const DATA_DIR = "/var/lib/signalk/plugin-config-data/signalk-grafana";
 
 describe("shapeGrafanaMounts", () => {
   it("mounts bind sources at the standard destinations without env", () => {
