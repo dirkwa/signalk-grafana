@@ -783,6 +783,14 @@ module.exports = (app: App) => {
             res.status(503).json({ error: "Container manager not available" });
             return;
           }
+          // Snapshot the closure variable so narrowing survives the awaits
+          // below; a null config means the plugin is stopped and an update
+          // would otherwise create a container from fabricated defaults.
+          const config = currentConfig;
+          if (!config) {
+            res.status(503).json({ error: "Plugin not running" });
+            return;
+          }
 
           const ghRes = await fetch(
             "https://api.github.com/repos/grafana/grafana/releases?per_page=5",
@@ -814,51 +822,18 @@ module.exports = (app: App) => {
           await containers.remove("signalk-grafana");
 
           app.setPluginStatus(`Starting Grafana ${newTag}...`);
-          // WHY: app.getDataDirPath() is SK-container-internal when SK runs in a container; the runtime daemon needs the host source.
-          const provisioningSrc = await resolveVolumeSource(
-            containers,
-            `${app.getDataDirPath()}/provisioning`,
+          await containers.ensureRunning(
+            CONTAINER_NAME,
+            await buildContainerConfig(containers, app.getDataDirPath(), {
+              ...config,
+              grafanaVersion: newTag,
+            }),
           );
-          const grafanaDataSrc = await resolveVolumeSource(
-            containers,
-            `${app.getDataDirPath()}/grafana-data`,
-          );
-          await containers.ensureRunning("signalk-grafana", {
-            image: "grafana/grafana",
-            tag: newTag,
-            ports: {
-              "3000/tcp": `${currentConfig?.bindToAllInterfaces ? "0.0.0.0" : "127.0.0.1"}:${currentConfig?.grafanaPort ?? 3001}`,
-            },
-            networkMode: currentConfig?.networkName ?? "sk-network",
-            volumes: {
-              "/etc/grafana/provisioning": provisioningSrc,
-              "/var/lib/grafana": grafanaDataSrc,
-            },
-            env: {
-              GF_SECURITY_ADMIN_PASSWORD:
-                currentConfig?.adminPassword ?? "admin",
-              GF_AUTH_ANONYMOUS_ENABLED: String(
-                currentConfig?.anonymousAccess ?? true,
-              ),
-              GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer",
-              GF_PLUGINS_PREINSTALL: GRAFANA_PREINSTALL_PLUGINS,
-              GF_SECURITY_ALLOW_EMBEDDING: "true",
-              ...(currentConfig?.subPath
-                ? {
-                    GF_SERVER_ROOT_URL: `%(protocol)s://%(domain)s:%(http_port)s${currentConfig.subPath}`,
-                    GF_SERVER_SERVE_FROM_SUB_PATH: "true",
-                  }
-                : {}),
-            },
-            restart: "unless-stopped",
-          });
 
-          if (currentConfig) {
-            currentConfig.grafanaVersion = newTag;
-          }
+          config.grafanaVersion = newTag;
 
           app.setPluginStatus(
-            `Grafana ${newTag} running at port ${currentConfig?.grafanaPort ?? 3001}`,
+            `Grafana ${newTag} running at port ${config.grafanaPort}`,
           );
           res.json({
             status: "updated",
