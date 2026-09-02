@@ -115,19 +115,20 @@ QuestDB's `SAMPLE BY` handles time bucketing (e.g., `SAMPLE BY 10s`, `SAMPLE BY 
 
 ## Configuration
 
-| Setting               | Default           | Description                                                  |
-| --------------------- | ----------------- | ------------------------------------------------------------ |
-| Grafana port          | `3001`            | Host port for Grafana UI                                     |
-| Image version         | `latest`          | Grafana Docker image tag                                     |
-| Admin password        | `admin`           | Grafana admin password (applied on every start)              |
-| Anonymous access      | `true`            | Allow viewing without login                                  |
-| Signal K URL override | auto              | Auto-detected; set to override (use `http://` or `https://`) |
-| QuestDB container     | `signalk-questdb` | Container name (without sk- prefix)                          |
-| PostgreSQL port       | `8812`            | QuestDB PG wire port                                         |
-| Network name          | `sk-network`      | Shared container network name                                |
-| Bind to 0.0.0.0       | `false`           | Expose Grafana outside localhost                             |
-| Sub-path              | empty             | Set to `/grafana/` when running behind a reverse proxy       |
-| Auto-request token    | `true`            | On secured Signal K servers, request a device-access token   |
+| Setting               | Default           | Description                                                                                                                                                                |
+| --------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Grafana port          | `3001`            | Host port for Grafana UI                                                                                                                                                   |
+| Image version         | `latest`          | Grafana Docker image tag                                                                                                                                                   |
+| Admin password        | `admin`           | Grafana admin password (applied on every start)                                                                                                                            |
+| Anonymous access      | `true`            | Allow viewing without login                                                                                                                                                |
+| Signal K URL override | auto              | Auto-detected; set to override (use `http://` or `https://`)                                                                                                               |
+| QuestDB container     | `signalk-questdb` | Container name (without sk- prefix)                                                                                                                                        |
+| QuestDB host override | empty             | Bare hostname/IP for a self-hosted QuestDB (IPv6 in brackets: `[fd00::10]`); empty uses the managed QuestDB container. Must be reachable from inside the Grafana container |
+| PostgreSQL port       | `8812`            | QuestDB PG wire port                                                                                                                                                       |
+| Network name          | `sk-network`      | Shared container network name                                                                                                                                              |
+| Bind to 0.0.0.0       | `false`           | Expose Grafana outside localhost                                                                                                                                           |
+| Sub-path              | empty             | Set to `/grafana/` when running behind a reverse proxy                                                                                                                     |
+| Auto-request token    | `true`            | On secured Signal K servers, request a device-access token                                                                                                                 |
 
 ### Secured Signal K servers
 
