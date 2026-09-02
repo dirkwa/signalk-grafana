@@ -2,7 +2,7 @@ import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { SignalkEndpoint } from "./provisioning";
+import { SignalkEndpoint } from "./provisioning.js";
 
 const DATASOURCE_HOST = "host.containers.internal";
 const REQUEST_TIMEOUT_MS = 2000;

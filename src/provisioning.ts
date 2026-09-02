@@ -1,7 +1,7 @@
 import { chmodSync, mkdirSync, writeFileSync } from "fs";
 import { isIP } from "net";
 import { join } from "path";
-import { Config } from "./config/schema";
+import { Config } from "./config/schema.js";
 
 export interface SignalkEndpoint {
   host: string;

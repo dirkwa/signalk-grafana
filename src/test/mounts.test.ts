@@ -6,7 +6,7 @@ import {
   MountResolution,
   resolveGrafanaMounts,
   shapeGrafanaMounts,
-} from "../mounts";
+} from "../mounts.js";
 
 // WHY /var/lib: plugin-ci rejects hardcoded /home/<user>/ paths in source files.
 const DATA_DIR = "/var/lib/signalk/plugin-config-data/signalk-grafana";

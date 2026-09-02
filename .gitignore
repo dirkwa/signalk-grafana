@@ -6,3 +6,5 @@ public/*.txt
 *.tsbuildinfo
 .DS_Store
 *.log
+public/*.mjs
+public/*.mjs.map
