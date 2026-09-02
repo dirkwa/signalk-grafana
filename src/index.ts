@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "fs";
 import { join } from "node:path";
-import path from "node:path";
+import { resolveGrafanaMounts } from "./mounts";
 import { IRouter } from "express";
 import { Config, ConfigSchema } from "./config/schema";
 import {
@@ -92,22 +92,6 @@ async function isContainerizedSignalK(
     return result.isContainerized === true;
   } catch {
     return false;
-  }
-}
-
-// WHY: in-container SK needs signalk-container to translate the plugin path to a host-visible bind source; fall back to the in-container path on any failure so bare-metal and older signalk-container keep working.
-async function resolveVolumeSource(
-  containers: ContainerManagerApi | undefined,
-  absPath: string,
-): Promise<string> {
-  if (!containers || typeof containers.resolveHostPath !== "function")
-    return absPath;
-  try {
-    const resolved = await containers.resolveHostPath(absPath);
-    // WHY: join source + subPath to handle parent-directory mounts (subPath is "" for exact-match mounts).
-    return resolved ? path.join(resolved.source, resolved.subPath) : absPath;
-  } catch {
-    return absPath;
   }
 }
 
@@ -561,14 +545,7 @@ module.exports = (app: App) => {
     config: Config,
   ) {
     const bind = config.bindToAllInterfaces ? "0.0.0.0" : "127.0.0.1";
-    const provisioningSrc = await resolveVolumeSource(
-      containers,
-      `${dataDir}/provisioning`,
-    );
-    const grafanaDataSrc = await resolveVolumeSource(
-      containers,
-      `${dataDir}/grafana-data`,
-    );
+    const mounts = await resolveGrafanaMounts(containers, dataDir);
     return {
       image: "grafana/grafana",
       tag: config.grafanaVersion ?? "latest",
@@ -576,11 +553,11 @@ module.exports = (app: App) => {
         "3000/tcp": `${bind}:${config.grafanaPort}`,
       },
       networkMode: config.networkName,
-      volumes: {
-        "/etc/grafana/provisioning": provisioningSrc,
-        "/var/lib/grafana": grafanaDataSrc,
-      },
+      volumes: mounts.volumes,
       env: {
+        // GF_PATHS_* redirects, present only when a named volume forced a
+        // whole-volume mount away from the standard Grafana directories.
+        ...mounts.env,
         GF_SECURITY_ADMIN_PASSWORD: config.adminPassword ?? "admin",
         GF_AUTH_ANONYMOUS_ENABLED: String(config.anonymousAccess ?? true),
         GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer",
