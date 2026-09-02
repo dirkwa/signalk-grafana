@@ -199,6 +199,20 @@ describe("generateProvisioning", () => {
     assert.ok(content.includes('url: "[fd00::10]:8812"'));
   });
 
+  it("accepts an IPv4-mapped bracketed IPv6 host override", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "grafana-test-"));
+    generateProvisioning(tempDir, {
+      ...defaultConfig,
+      questdbHost: "[::ffff:192.0.2.1]",
+    });
+
+    const content = readFileSync(
+      join(tempDir, "provisioning/datasources/questdb.yaml"),
+      "utf8",
+    );
+    assert.ok(content.includes('server: "[::ffff:192.0.2.1]"'));
+  });
+
   it("accepts container names with mid-label underscores", () => {
     // Legacy Compose container names carry underscores and container DNS resolves them.
     tempDir = mkdtempSync(join(tmpdir(), "grafana-test-"));

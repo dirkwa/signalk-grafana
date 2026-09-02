@@ -48,7 +48,7 @@ export function resolveQuestdbHost(config: Config): string {
   const override = config.questdbHost?.trim();
   if (!override) return `sk-${config.questdbContainerName}`;
   const valid = override.startsWith("[")
-    ? /^\[[0-9A-Fa-f:]+\]$/.test(override) && isIP(override.slice(1, -1)) === 6
+    ? /^\[[0-9A-Fa-f:.]+\]$/.test(override) && isIP(override.slice(1, -1)) === 6
     : override.split(".").every((label) => HOST_LABEL.test(label));
   if (!valid) {
     throw new Error(
