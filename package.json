@@ -40,6 +40,9 @@
     "type": "git",
     "url": "https://github.com/dirkwa/signalk-grafana"
   },
+  "dependencies": {
+    "@sinclair/typebox": "^0.34.0"
+  },
   "devDependencies": {
     "@babel/core": "^7.29.0",
     "@babel/preset-react": "^7.28.5",

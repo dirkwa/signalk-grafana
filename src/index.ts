@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "fs";
 import { join } from "node:path";
-import path from "node:path";
+import { resolveGrafanaMounts } from "./mounts";
 import { IRouter } from "express";
 import { Config, ConfigSchema } from "./config/schema";
 import {
@@ -95,22 +95,6 @@ async function isContainerizedSignalK(
   }
 }
 
-// WHY: in-container SK needs signalk-container to translate the plugin path to a host-visible bind source; fall back to the in-container path on any failure so bare-metal and older signalk-container keep working.
-async function resolveVolumeSource(
-  containers: ContainerManagerApi | undefined,
-  absPath: string,
-): Promise<string> {
-  if (!containers || typeof containers.resolveHostPath !== "function")
-    return absPath;
-  try {
-    const resolved = await containers.resolveHostPath(absPath);
-    // WHY: join source + subPath to handle parent-directory mounts (subPath is "" for exact-match mounts).
-    return resolved ? path.join(resolved.source, resolved.subPath) : absPath;
-  } catch {
-    return absPath;
-  }
-}
-
 const ENDPOINT_SIDECAR = "signalk-endpoint";
 
 function readLastGoodEndpoint(dataDir: string): SignalkEndpoint | undefined {
@@ -166,6 +150,7 @@ function signalkBaseFromEndpoint(
 interface RecreateInputs {
   tag: string;
   ports: Record<string, string>;
+  volumes: Record<string, string>;
   env: Record<string, string>;
   networkMode: string;
 }
@@ -191,6 +176,7 @@ function computeConfigHash(inputs: RecreateInputs, dataDir: string): string {
   return JSON.stringify({
     tag: inputs.tag,
     ports: inputs.ports,
+    volumes: inputs.volumes,
     env: inputs.env,
     networkMode: inputs.networkMode,
     provisioningHash,
@@ -561,14 +547,7 @@ module.exports = (app: App) => {
     config: Config,
   ) {
     const bind = config.bindToAllInterfaces ? "0.0.0.0" : "127.0.0.1";
-    const provisioningSrc = await resolveVolumeSource(
-      containers,
-      `${dataDir}/provisioning`,
-    );
-    const grafanaDataSrc = await resolveVolumeSource(
-      containers,
-      `${dataDir}/grafana-data`,
-    );
+    const mounts = await resolveGrafanaMounts(containers, dataDir);
     return {
       image: "grafana/grafana",
       tag: config.grafanaVersion ?? "latest",
@@ -576,11 +555,10 @@ module.exports = (app: App) => {
         "3000/tcp": `${bind}:${config.grafanaPort}`,
       },
       networkMode: config.networkName,
-      volumes: {
-        "/etc/grafana/provisioning": provisioningSrc,
-        "/var/lib/grafana": grafanaDataSrc,
-      },
+      volumes: mounts.volumes,
       env: {
+        // GF_PATHS_* redirects; only present when a named volume forced a whole-volume mount.
+        ...mounts.env,
         GF_SECURITY_ADMIN_PASSWORD: config.adminPassword ?? "admin",
         GF_AUTH_ANONYMOUS_ENABLED: String(config.anonymousAccess ?? true),
         GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer",
@@ -783,6 +761,12 @@ module.exports = (app: App) => {
             res.status(503).json({ error: "Container manager not available" });
             return;
           }
+          // WHY snapshot: narrowing must survive the awaits below; null means the plugin is stopped — refuse rather than create a container from fabricated defaults.
+          const config = currentConfig;
+          if (!config) {
+            res.status(503).json({ error: "Plugin not running" });
+            return;
+          }
 
           const ghRes = await fetch(
             "https://api.github.com/repos/grafana/grafana/releases?per_page=5",
@@ -810,60 +794,81 @@ module.exports = (app: App) => {
           app.setPluginStatus(`Pulling Grafana ${newTag}...`);
           await containers.pullImage(`grafana/grafana:${newTag}`);
 
+          // WHY recheck: stop() or a restart during the fetch+pull awaits must not let this stale request resurrect or reconfigure the container; a changed identity means a newer lifecycle owner took over.
+          if (currentConfig !== config) {
+            res.status(409).json({
+              error:
+                "Plugin stopped or restarted during the update — apply again.",
+            });
+            return;
+          }
+
           app.setPluginStatus("Replacing container...");
           await containers.remove("signalk-grafana");
 
           app.setPluginStatus(`Starting Grafana ${newTag}...`);
-          // WHY: app.getDataDirPath() is SK-container-internal when SK runs in a container; the runtime daemon needs the host source.
-          const provisioningSrc = await resolveVolumeSource(
+          const dataDir = app.getDataDirPath();
+          const containerConfig = await buildContainerConfig(
             containers,
-            `${app.getDataDirPath()}/provisioning`,
+            dataDir,
+            { ...config, grafanaVersion: newTag },
           );
-          const grafanaDataSrc = await resolveVolumeSource(
-            containers,
-            `${app.getDataDirPath()}/grafana-data`,
-          );
-          await containers.ensureRunning("signalk-grafana", {
-            image: "grafana/grafana",
-            tag: newTag,
-            ports: {
-              "3000/tcp": `${currentConfig?.bindToAllInterfaces ? "0.0.0.0" : "127.0.0.1"}:${currentConfig?.grafanaPort ?? 3001}`,
-            },
-            networkMode: currentConfig?.networkName ?? "sk-network",
-            volumes: {
-              "/etc/grafana/provisioning": provisioningSrc,
-              "/var/lib/grafana": grafanaDataSrc,
-            },
-            env: {
-              GF_SECURITY_ADMIN_PASSWORD:
-                currentConfig?.adminPassword ?? "admin",
-              GF_AUTH_ANONYMOUS_ENABLED: String(
-                currentConfig?.anonymousAccess ?? true,
-              ),
-              GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer",
-              GF_PLUGINS_PREINSTALL: GRAFANA_PREINSTALL_PLUGINS,
-              GF_SECURITY_ALLOW_EMBEDDING: "true",
-              ...(currentConfig?.subPath
-                ? {
-                    GF_SERVER_ROOT_URL: `%(protocol)s://%(domain)s:%(http_port)s${currentConfig.subPath}`,
-                    GF_SERVER_SERVE_FROM_SUB_PATH: "true",
-                  }
-                : {}),
-            },
-            restart: "unless-stopped",
-          });
+          // WHY second check: a stop() or restart landing during remove+resolve must not be undone by this stale ensureRunning.
+          if (currentConfig !== config) {
+            res.status(409).json({
+              error:
+                "Plugin stopped or restarted during the update — apply again.",
+            });
+            return;
+          }
+          await containers.ensureRunning(CONTAINER_NAME, containerConfig);
 
-          if (currentConfig) {
-            currentConfig.grafanaVersion = newTag;
+          // WHY third check: a restart racing the ensureRunning await owns the hash file and saved options now — don't clobber them with this request's state.
+          if (currentConfig !== config) {
+            // WHY stop on null: our ensureRunning may have resurrected a container that stop() already stopped; after a restart the new owner keeps it.
+            if (currentConfig === null) {
+              try {
+                await containers.stop(CONTAINER_NAME);
+              } catch {
+                // already stopped or gone
+              }
+            }
+            res.status(409).json({
+              error:
+                "Plugin stopped or restarted during the update — apply again.",
+            });
+            return;
+          }
+
+          config.grafanaVersion = newTag;
+          // Keep the recreate hash in step so the next start doesn't recreate a second time.
+          writeFileSync(
+            `${dataDir}.container-hash`,
+            computeConfigHash(containerConfig, dataDir),
+          );
+          // WHY persist: asyncStart rebuilds from saved options, so an unsaved tag reverts the update on the next plugin restart.
+          const persistErr = await new Promise<string | null>((resolve) => {
+            if (typeof app.savePluginOptions !== "function") {
+              resolve("savePluginOptions unavailable");
+              return;
+            }
+            app.savePluginOptions({ ...config }, (err) =>
+              resolve(err ? err.message : null),
+            );
+          });
+          if (persistErr) {
+            app.error(`Failed to persist Grafana version: ${persistErr}`);
           }
 
           app.setPluginStatus(
-            `Grafana ${newTag} running at port ${currentConfig?.grafanaPort ?? 3001}`,
+            `Grafana ${newTag} running at port ${config.grafanaPort}`,
           );
           res.json({
             status: "updated",
             newVersion: newTag,
-            message: `Updated to Grafana ${newTag}. Container running.`,
+            message: persistErr
+              ? `Updated to Grafana ${newTag}. Container running, but the version could not be saved (${persistErr}) — it may revert on plugin restart.`
+              : `Updated to Grafana ${newTag}. Container running.`,
           });
         } catch (err) {
           res.status(500).json({
