@@ -555,8 +555,7 @@ module.exports = (app: App) => {
       networkMode: config.networkName,
       volumes: mounts.volumes,
       env: {
-        // GF_PATHS_* redirects, present only when a named volume forced a
-        // whole-volume mount away from the standard Grafana directories.
+        // GF_PATHS_* redirects; only present when a named volume forced a whole-volume mount.
         ...mounts.env,
         GF_SECURITY_ADMIN_PASSWORD: config.adminPassword ?? "admin",
         GF_AUTH_ANONYMOUS_ENABLED: String(config.anonymousAccess ?? true),
@@ -760,9 +759,7 @@ module.exports = (app: App) => {
             res.status(503).json({ error: "Container manager not available" });
             return;
           }
-          // Snapshot the closure variable so narrowing survives the awaits
-          // below; a null config means the plugin is stopped and an update
-          // would otherwise create a container from fabricated defaults.
+          // WHY snapshot: narrowing must survive the awaits below; null means the plugin is stopped — refuse rather than create a container from fabricated defaults.
           const config = currentConfig;
           if (!config) {
             res.status(503).json({ error: "Plugin not running" });

@@ -1,20 +1,13 @@
 import path from "node:path";
 
-// Where the requested directories must be visible inside the Grafana
-// container. Grafana reads both locations from env-overridable defaults
-// (GF_PATHS_PROVISIONING / GF_PATHS_DATA), which is what makes the
-// named-volume redirect below possible at all.
+// Grafana reads both standard directories from env-overridable defaults (GF_PATHS_*), which is what makes the named-volume redirect below possible.
 export const GRAFANA_PROVISIONING_DIR = "/etc/grafana/provisioning";
 export const GRAFANA_DATA_DIR = "/var/lib/grafana";
 
-// Mount root for whole named volumes. Suffixed with the volume name so two
-// distinct volumes can never collide, and deterministic so the container
-// config (and its recreate hash) stays stable across restarts.
+// WHY per-volume subdir: distinct volumes can never collide, and the path is deterministic so the recreate hash stays stable.
 export const VOLUME_MOUNT_ROOT = "/signalk-vols";
 
-// Result shape of signalk-container's resolveHostPath: `source` is the left
-// side of a -v flag (host path or named-volume name), `subPath` the offset
-// inside that mount where the requested path lives ("" when none).
+// resolveHostPath result: source is the left side of -v (host path or named-volume name), subPath the offset inside that mount ("" when none).
 export interface MountResolution {
   source: string;
   subPath: string;
@@ -38,9 +31,7 @@ export interface GrafanaMounts {
 
 function shapeOne(desiredDest: string, r: MountResolution): ShapedMount {
   if (path.isAbsolute(r.source)) {
-    // Bind mount. Current signalk-container folds subPath into source for
-    // binds; the join keeps older versions that reported parent-directory
-    // binds with a subPath working (it is a no-op on "").
+    // WHY join: current signalk-container folds subPath into bind sources already; the join keeps older parent-bind reporting working (no-op on "").
     return {
       source: path.join(r.source, r.subPath),
       mountDest: desiredDest,
@@ -48,19 +39,14 @@ function shapeOne(desiredDest: string, r: MountResolution): ShapedMount {
     };
   }
   if (r.subPath === "") {
-    // Named volume attached exactly at the requested directory — mountable
-    // as-is at the standard destination.
+    // Named volume attached exactly at the requested dir — mountable as-is.
     return {
       source: r.source,
       mountDest: desiredDest,
       containerPath: desiredDest,
     };
   }
-  // Named volume covering a parent (typically the whole SK config root).
-  // Runtimes cannot uniformly subpath-mount volumes (podman < 6.1 silently
-  // ignores VolumeOptions.Subpath), and "volume/sub" as a source is rejected
-  // as an invalid volume name — so mount the volume whole and point Grafana
-  // at the subdirectory via GF_PATHS_* instead.
+  // WHY whole-volume mount: runtimes can't uniformly subpath-mount volumes (podman < 6.1 silently ignores VolumeOptions.Subpath) and "vol/sub" is an invalid volume name — so mount the volume whole and redirect Grafana via GF_PATHS_*.
   const mountDest = `${VOLUME_MOUNT_ROOT}/${r.source}`;
   return {
     source: r.source,
@@ -75,8 +61,7 @@ export function shapeGrafanaMounts(
 ): GrafanaMounts {
   const prov = shapeOne(GRAFANA_PROVISIONING_DIR, provisioning);
   const data = shapeOne(GRAFANA_DATA_DIR, grafanaData);
-  // Both directories normally live in the same volume, so the record
-  // dedupes to a single whole-volume mount.
+  // Both directories normally share one volume, so the record dedupes to a single whole-volume mount.
   const volumes: Record<string, string> = {
     [prov.mountDest]: prov.source,
     [data.mountDest]: data.source,
@@ -89,9 +74,7 @@ export function shapeGrafanaMounts(
   return { volumes, env };
 }
 
-// WHY: in-container SK needs signalk-container to translate plugin paths to
-// host-visible mount sources; fall back to the in-container path on any
-// failure so bare-metal and older signalk-container keep working.
+// WHY fallback: bare-metal and older signalk-container have no resolveHostPath; the in-container path is then already the host path.
 export async function resolveGrafanaMounts(
   resolver: HostPathResolver | undefined,
   dataDir: string,
