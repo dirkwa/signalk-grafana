@@ -794,6 +794,15 @@ module.exports = (app: App) => {
           app.setPluginStatus(`Pulling Grafana ${newTag}...`);
           await containers.pullImage(`grafana/grafana:${newTag}`);
 
+          // WHY recheck: stop() or a restart during the fetch+pull awaits must not let this stale request resurrect or reconfigure the container; a changed identity means a newer lifecycle owner took over.
+          if (currentConfig !== config) {
+            res.status(409).json({
+              error:
+                "Plugin stopped or restarted during the update — apply again.",
+            });
+            return;
+          }
+
           app.setPluginStatus("Replacing container...");
           await containers.remove("signalk-grafana");
 
@@ -804,7 +813,24 @@ module.exports = (app: App) => {
             dataDir,
             { ...config, grafanaVersion: newTag },
           );
+          // WHY second check: a stop() or restart landing during remove+resolve must not be undone by this stale ensureRunning.
+          if (currentConfig !== config) {
+            res.status(409).json({
+              error:
+                "Plugin stopped or restarted during the update — apply again.",
+            });
+            return;
+          }
           await containers.ensureRunning(CONTAINER_NAME, containerConfig);
+
+          // WHY third check: a restart racing the ensureRunning await owns the hash file and saved options now — don't clobber them with this request's state.
+          if (currentConfig !== config) {
+            res.status(409).json({
+              error:
+                "Plugin stopped or restarted during the update — apply again.",
+            });
+            return;
+          }
 
           config.grafanaVersion = newTag;
           // Keep the recreate hash in step so the next start doesn't recreate a second time.
