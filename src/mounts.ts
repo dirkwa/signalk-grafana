@@ -39,7 +39,6 @@ function shapeOne(desiredDest: string, r: MountResolution): ShapedMount {
     };
   }
   if (r.subPath === "") {
-    // Named volume attached exactly at the requested dir — mountable as-is.
     return {
       source: r.source,
       mountDest: desiredDest,
