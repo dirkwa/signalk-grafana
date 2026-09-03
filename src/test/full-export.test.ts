@@ -21,7 +21,7 @@ import {
   handleProvisioningManifest,
   type DbBackupFn,
   type ExportRequest,
-} from "../full-export";
+} from "../full-export.js";
 
 // Minimal request mock — handlers only read `req.params`, so we expose
 // only that. `Response` is faked separately below.

@@ -18,6 +18,7 @@
       "./docs/screenshot/signalk_grafana_2.png"
     ]
   },
+  "type": "module",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc && webpack",

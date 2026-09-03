@@ -10,7 +10,7 @@ import {
 } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { rehydrateFromBackup } from "../rehydrate";
+import { rehydrateFromBackup } from "../rehydrate.js";
 
 // Builds the `<configRoot>/plugin-config-data/{signalk-grafana, signalk-backup}`
 // layout that rehydrate expects, returns the path the function takes as

@@ -21,7 +21,7 @@ The plugin will refuse to start without these — they are listed in `package.js
   3. `stop()` — best-effort container stop, clears `currentConfig`.
 - [src/provisioning.ts](src/provisioning.ts) — generates `provisioning/datasources/*.yaml` under `app.getDataDirPath()`. Both datasources are YAML-provisioned. `resolveSignalkEndpoint(config)` parses `config.signalkUrl` with `new URL()`, preserves `http`/`https`, defaults to `http://host.containers.internal:${process.env.PORT}` when no override is set, and throws on non-http(s) schemes (catches typos like `htps://`).
 - [src/config/schema.ts](src/config/schema.ts) — typebox schema → Signal K admin UI form. Adding a config field starts here.
-- [src/configpanel/PluginConfigurationPanel.js](src/configpanel/PluginConfigurationPanel.js) — React (19) panel rendered inside Signal K admin. JavaScript, not TypeScript; bundled by webpack via `module federation` so React is shared with the host.
+- [src/configpanel/PluginConfigurationPanel.js](src/configpanel/PluginConfigurationPanel.js) — React (19) panel rendered inside Signal K admin. JavaScript, not TypeScript; bundled by webpack ([webpack.config.cjs](webpack.config.cjs)) via `module federation` so React is shared with the host. The package is `"type": "module"`, so the remote is an **ESM container** (`experiments.outputModule`, `library: { type: "module" }`) — the server injects `<script type="module">` and the Admin UI dynamic-imports real `get`/`init` exports; a classic `var` remote fails with a misleading "webapp is not installed" error.
 - [src/test/provisioning.test.ts](src/test/provisioning.test.ts) — `node:test`, no test framework. Tests run against the compiled `dist/` (`node --test 'dist/test/**/*.test.js'`), so a stale build is the most common test failure.
 
 ## Build, lint, test
@@ -41,7 +41,7 @@ There is no separate `npm run dev` — the plugin runs inside a real Signal K se
 The plugin runs inside whichever Signal K server has `signalk-grafana` in its `node_modules`. In this repo's typical dev layout, a Signal K data dir (e.g. `~/.signalk-charts-docker`) symlinks `node_modules/signalk-grafana` → `~/dev/signalk-grafana`. After editing source:
 
 1. `npm run build:all` — webpack writes `dist/`, tests run.
-2. Reload the plugin. The Signal K admin API at `/skServer/plugins/<id>/config` saves config and triggers stop+start, but **does not re-`require()` the plugin code** — Node's `require.cache` keeps the old module. To pick up code changes you must restart the Signal K _process_.
+2. Reload the plugin. The Signal K admin API at `/skServer/plugins/<id>/config` saves config and triggers stop+start, but **does not reload the plugin code** — the server calls `stop()`/`start()` on the already-loaded module, and Node's ESM module cache (this package is `"type": "module"`) has no invalidation. To pick up code changes you must restart the Signal K _process_.
 3. `curl http://127.0.0.1:<sk-port>/plugins/signalk-grafana/api/status` to confirm the new code is live.
 
 ## Debugging recipes

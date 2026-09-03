@@ -18,7 +18,7 @@ import {
   SignalkBase,
   Transport,
   writeCachedToken,
-} from "../signalk-token";
+} from "../signalk-token.js";
 
 let dataDir: string;
 

@@ -1,6 +1,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { FetchLike, probeSignalkDatasource } from "../grafana-datasource-probe";
+import {
+  FetchLike,
+  probeSignalkDatasource,
+} from "../grafana-datasource-probe.js";
 
 const GRAFANA = "http://127.0.0.1:3001";
 

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { generateProvisioning } from "../provisioning";
+import { generateProvisioning } from "../provisioning.js";
 
 const defaultConfig = {
   grafanaPort: 3001,

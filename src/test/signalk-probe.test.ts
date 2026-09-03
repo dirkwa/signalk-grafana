@@ -7,7 +7,7 @@ import {
   probeResultToEndpoint,
   probeSignalkEndpoint,
   resolveProbeHttpPort,
-} from "../signalk-probe";
+} from "../signalk-probe.js";
 
 const DISCOVERY = JSON.stringify({
   endpoints: { v1: { version: "2.28.0" } },

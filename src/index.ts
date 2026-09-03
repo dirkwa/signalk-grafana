@@ -1,35 +1,35 @@
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "fs";
 import { join } from "node:path";
-import { resolveGrafanaMounts } from "./mounts";
+import { resolveGrafanaMounts } from "./mounts.js";
 import { IRouter } from "express";
-import { Config, ConfigSchema } from "./config/schema";
+import { Config, ConfigSchema } from "./config/schema.js";
 import {
   generateProvisioning,
   resolveSignalkEndpoint,
   SignalkEndpoint,
-} from "./provisioning";
+} from "./provisioning.js";
 import {
   probeResultToEndpoint,
   probeSignalkEndpoint,
   resolveProbeHttpPort,
-} from "./signalk-probe";
-import { probeSignalkDatasource } from "./grafana-datasource-probe";
+} from "./signalk-probe.js";
+import { probeSignalkDatasource } from "./grafana-datasource-probe.js";
 import {
   handleDashboardFile,
   handleDashboardManifest,
   handleDbExport,
   handleProvisioningFile,
   handleProvisioningManifest,
-} from "./full-export";
-import { rehydrateFromBackup } from "./rehydrate";
+} from "./full-export.js";
+import { rehydrateFromBackup } from "./rehydrate.js";
 import {
   awaitApproval,
   beginTokenRequest,
   readCachedToken,
   SignalkBase,
   writeCachedToken,
-} from "./signalk-token";
+} from "./signalk-token.js";
 
 const PLUGIN_ID = "signalk-grafana";
 const CONTAINER_NAME = "signalk-grafana";
@@ -218,7 +218,7 @@ async function startupStatusMessage(
   );
 }
 
-module.exports = (app: App) => {
+export default (app: App) => {
   let currentConfig: Config | null = null;
   // Set true on stop() so any in-flight token poller exits its loop.
   let tokenPollerCancelled = false;
