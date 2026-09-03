@@ -41,7 +41,7 @@ There is no separate `npm run dev` — the plugin runs inside a real Signal K se
 The plugin runs inside whichever Signal K server has `signalk-grafana` in its `node_modules`. In this repo's typical dev layout, a Signal K data dir (e.g. `~/.signalk-charts-docker`) symlinks `node_modules/signalk-grafana` → `~/dev/signalk-grafana`. After editing source:
 
 1. `npm run build:all` — webpack writes `dist/`, tests run.
-2. Reload the plugin. The Signal K admin API at `/skServer/plugins/<id>/config` saves config and triggers stop+start, but **does not re-`require()` the plugin code** — Node's `require.cache` keeps the old module. To pick up code changes you must restart the Signal K _process_.
+2. Reload the plugin. The Signal K admin API at `/skServer/plugins/<id>/config` saves config and triggers stop+start, but **does not reload the plugin code** — the server calls `stop()`/`start()` on the already-loaded module, and Node's ESM module cache (this package is `"type": "module"`) has no invalidation. To pick up code changes you must restart the Signal K _process_.
 3. `curl http://127.0.0.1:<sk-port>/plugins/signalk-grafana/api/status` to confirm the new code is live.
 
 ## Debugging recipes
