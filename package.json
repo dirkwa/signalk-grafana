@@ -42,7 +42,8 @@
     "url": "https://github.com/dirkwa/signalk-grafana"
   },
   "dependencies": {
-    "@sinclair/typebox": "^0.34.0"
+    "@sinclair/typebox": "^0.34.0",
+    "signalk-container-helper": "^0.11.0"
   },
   "devDependencies": {
     "@babel/core": "^7.29.0",
