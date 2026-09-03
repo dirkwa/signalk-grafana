@@ -187,8 +187,48 @@ export default (app: App) => {
   let tokenPollerCancelled = false;
   // WHY: token-approval reprovisioning must reuse the startup endpoint.
   let sessionEndpoint: SignalkEndpoint | null = null;
-  // WHY instance state: applyToken and the update route go through the same ManagedContainer so every recreate is serialized against start/stop.
+  // WHY instance state: applyToken and the update routes go through the same ManagedContainer so every recreate is serialized against start/stop.
   let container: ManagedContainer | null = null;
+  // WHY a ref: buildConfig stays sync while mounts resolve async per start.
+  let currentContainerConfig: ContainerConfig | null = null;
+  let panelRouter: IRouter | null = null;
+  let updateRoutesRegistered = false;
+
+  // Mounts GET/POST /api/update/{check,apply} against the ManagedContainer — serialized applies, manager-side release checking. Runs when both the router and the container exist, whichever arrives second.
+  function registerUpdateRoutesOnce() {
+    if (updateRoutesRegistered || !panelRouter || !container) return;
+    updateRoutesRegistered = true;
+    // WHY gate: the instance and its routes outlive stop(), and an apply on a disabled plugin would resurrect Grafana while nothing owns it.
+    panelRouter.use("/api/update", (_req, res, next) => {
+      if (!currentConfig) {
+        res.status(503).json({ error: "Plugin not running" });
+        return;
+      }
+      next();
+    });
+    container.registerUpdateRoutes(panelRouter, {
+      onApplied: async (requestedTag) => {
+        if (!currentConfig) return;
+        currentConfig.grafanaVersion = requestedTag;
+        // WHY persist: asyncStart rebuilds from saved options, so an unsaved tag reverts the update on the next plugin restart.
+        const saved = { ...currentConfig };
+        await new Promise<void>((resolve) => {
+          if (typeof app.savePluginOptions !== "function") {
+            app.error(
+              "Failed to persist Grafana version: savePluginOptions unavailable",
+            );
+            resolve();
+            return;
+          }
+          app.savePluginOptions(saved, (err) => {
+            if (err)
+              app.error(`Failed to persist Grafana version: ${err.message}`);
+            resolve();
+          });
+        });
+      },
+    });
+  }
 
   async function asyncStart(config: Config) {
     currentConfig = config;
@@ -314,19 +354,24 @@ export default (app: App) => {
       await containers.remove(CONTAINER_NAME);
     }
 
-    container = new ManagedContainer({
-      app,
-      pluginId: PLUGIN_ID,
-      name: CONTAINER_NAME,
-      image: "grafana/grafana",
-      defaultTag: "latest",
-      buildConfig: (tag) => ({ ...containerConfig, tag }),
-      readiness: { port: 3000, path: "/api/health", maxMs: 90_000 },
-      updates: {
-        versionSource: { githubReleases: "grafana/grafana" },
-        currentTag: () => currentConfig?.grafanaVersion ?? "latest",
-      },
-    });
+    currentContainerConfig = containerConfig;
+    if (!container) {
+      // WHY construct once: registerUpdateRoutes closes over the instance, and one instance serializes lifecycle operations across plugin restarts; buildConfig reads the ref so a config change still takes effect on the next start.
+      container = new ManagedContainer({
+        app,
+        pluginId: PLUGIN_ID,
+        name: CONTAINER_NAME,
+        image: "grafana/grafana",
+        defaultTag: "latest",
+        buildConfig: (tag) => ({ ...currentContainerConfig!, tag }),
+        readiness: { port: 3000, path: "/api/health", maxMs: 90_000 },
+        updates: {
+          versionSource: { githubReleases: "grafana/grafana" },
+          currentTag: () => currentConfig?.grafanaVersion ?? "latest",
+        },
+      });
+      registerUpdateRoutesOnce();
+    }
 
     let healthy = true;
     try {
@@ -546,14 +591,16 @@ export default (app: App) => {
     async stop() {
       // WHY: an in-flight token poller must not outlive the plugin and write a stale token after stop().
       tokenPollerCancelled = true;
-      // Serialized against any in-flight start/recreate; stops (never removes) the container and unregisters update detection. Never throws.
+      // Serialized against any in-flight start/recreate; stops (never removes) the container and unregisters update detection. Never throws. The instance is kept so registered routes and serialization survive plugin restarts.
       await container?.stop();
-      container = null;
       currentConfig = null;
       sessionEndpoint = null;
     },
 
     registerWithRouter(router: IRouter) {
+      panelRouter = router;
+      registerUpdateRoutesOnce();
+
       router.get("/api/status", async (_req, res) => {
         try {
           if (!currentConfig) {
@@ -625,158 +672,7 @@ export default (app: App) => {
         }
       });
 
-      router.get("/api/update/check", async (_req, res) => {
-        try {
-          if (!currentConfig) {
-            res.status(503).json({ error: "Plugin not running" });
-            return;
-          }
-
-          const grafanaUrl = `http://127.0.0.1:${currentConfig.grafanaPort}`;
-          let currentVersion = "unknown";
-          try {
-            const healthRes = await fetch(`${grafanaUrl}/api/health`, {
-              signal: AbortSignal.timeout(3000),
-            });
-            if (healthRes.ok) {
-              const health = (await healthRes.json()) as {
-                version?: string;
-              };
-              currentVersion = health.version || "unknown";
-            }
-          } catch {
-            // not reachable
-          }
-
-          const ghRes = await fetch(
-            "https://api.github.com/repos/grafana/grafana/releases?per_page=5",
-            {
-              headers: { Accept: "application/vnd.github+json" },
-              signal: AbortSignal.timeout(10000),
-            },
-          );
-          let latestVersion = "unknown";
-          if (ghRes.ok) {
-            const releases = (await ghRes.json()) as {
-              tag_name: string;
-              prerelease: boolean;
-              draft: boolean;
-            }[];
-            const stable = releases.find((r) => !r.draft && !r.prerelease);
-            if (stable) latestVersion = stable.tag_name.replace(/^v/, "");
-          }
-
-          const isNewerAvailable = (
-            current: string,
-            latest: string,
-          ): boolean => {
-            const pc = current.split(".").map((s) => parseInt(s, 10) || 0);
-            const pl = latest.split(".").map((s) => parseInt(s, 10) || 0);
-            for (let i = 0; i < Math.max(pc.length, pl.length); i++) {
-              const vc = pc[i] ?? 0;
-              const vl = pl[i] ?? 0;
-              if (vl > vc) return true;
-              if (vl < vc) return false;
-            }
-            return false;
-          };
-
-          const updateAvailable =
-            currentVersion !== "unknown" &&
-            latestVersion !== "unknown" &&
-            isNewerAvailable(currentVersion, latestVersion);
-
-          res.json({ currentVersion, latestVersion, updateAvailable });
-        } catch (err) {
-          res.status(500).json({
-            error: err instanceof Error ? err.message : "Unknown error",
-          });
-        }
-      });
-
-      router.post("/api/update/apply", async (_req, res) => {
-        try {
-          // WHY snapshot: narrowing must survive the awaits below; null means the plugin is stopped — refuse rather than create a container from fabricated defaults.
-          const config = currentConfig;
-          if (!config) {
-            res.status(503).json({ error: "Plugin not running" });
-            return;
-          }
-
-          const ghRes = await fetch(
-            "https://api.github.com/repos/grafana/grafana/releases?per_page=5",
-            {
-              headers: { Accept: "application/vnd.github+json" },
-              signal: AbortSignal.timeout(10000),
-            },
-          );
-          if (!ghRes.ok) {
-            res.status(502).json({ error: "Failed to fetch releases" });
-            return;
-          }
-          const releases = (await ghRes.json()) as {
-            tag_name: string;
-            prerelease: boolean;
-            draft: boolean;
-          }[];
-          const stable = releases.find((r) => !r.draft && !r.prerelease);
-          if (!stable) {
-            res.status(404).json({ error: "No stable release found" });
-            return;
-          }
-          const newTag = stable.tag_name.replace(/^v/, "");
-
-          // WHY snapshot: applyUpdate serializes against start/stop, but this handler's persist below must not run for a lifecycle owner that has moved on.
-          const managed = container;
-          if (!managed) {
-            res.status(503).json({ error: "Plugin not running" });
-            return;
-          }
-          app.setPluginStatus(`Updating to Grafana ${newTag}...`);
-          // Serialized recreate; ensureRunning pulls the new tag when it is not local.
-          await managed.applyUpdate(newTag);
-
-          if (currentConfig !== config) {
-            // A stop() or restart queued behind the update owns the lifecycle now; its state must not be clobbered, and a stopped plugin must not keep the recreated container running.
-            if (currentConfig === null) await managed.stop();
-            res.status(409).json({
-              error:
-                "Plugin stopped or restarted during the update — apply again.",
-            });
-            return;
-          }
-
-          config.grafanaVersion = newTag;
-          // WHY persist: asyncStart rebuilds from saved options, so an unsaved tag reverts the update on the next plugin restart.
-          const persistErr = await new Promise<string | null>((resolve) => {
-            if (typeof app.savePluginOptions !== "function") {
-              resolve("savePluginOptions unavailable");
-              return;
-            }
-            app.savePluginOptions({ ...config }, (err) =>
-              resolve(err ? err.message : null),
-            );
-          });
-          if (persistErr) {
-            app.error(`Failed to persist Grafana version: ${persistErr}`);
-          }
-
-          app.setPluginStatus(
-            `Grafana ${newTag} running at port ${config.grafanaPort}`,
-          );
-          res.json({
-            status: "updated",
-            newVersion: newTag,
-            message: persistErr
-              ? `Updated to Grafana ${newTag}. Container running, but the version could not be saved (${persistErr}) — it may revert on plugin restart.`
-              : `Updated to Grafana ${newTag}. Container running.`,
-          });
-        } catch (err) {
-          res.status(500).json({
-            error: err instanceof Error ? err.message : "Unknown error",
-          });
-        }
-      });
+      // Update routes (/api/update/check + /api/update/apply) are mounted by registerUpdateRoutesOnce against the ManagedContainer.
 
       // Full-export endpoints used by signalk-backup to pull a
       // consistent snapshot of Grafana state for inclusion in its
