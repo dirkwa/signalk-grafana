@@ -1,6 +1,16 @@
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "fs";
 import { join } from "node:path";
+import {
+  ContainerHelperError,
+  ManagedContainer,
+  startSafely,
+  waitForContainerManager,
+} from "signalk-container-helper";
+import type {
+  ContainerConfig,
+  ContainerManagerApi,
+} from "signalk-container-helper";
 import { resolveGrafanaMounts } from "./mounts.js";
 import { IRouter } from "express";
 import { Config, ConfigSchema } from "./config/schema.js";
@@ -50,36 +60,6 @@ interface App {
     cb: (err: NodeJS.ErrnoException | null) => void,
   ) => void;
   [key: string]: unknown;
-}
-
-interface ContainerManagerApi {
-  getRuntime: () => { runtime: string; version: string } | null;
-  ensureRunning: (name: string, config: unknown) => Promise<void>;
-  pullImage: (
-    image: string,
-    onProgress?: (msg: string) => void,
-  ) => Promise<void>;
-  start: (name: string) => Promise<void>;
-  stop: (name: string) => Promise<void>;
-  remove: (name: string) => Promise<void>;
-  getState: (name: string) => Promise<string>;
-  execInContainer: (
-    name: string,
-    command: string[],
-  ) => Promise<{ exitCode: number; stdout: string; stderr: string }>;
-  ensureNetwork: (name: string) => Promise<void>;
-  connectToNetwork: (
-    containerName: string,
-    networkName: string,
-  ) => Promise<void>;
-  // WHY: optional to support older signalk-container versions without this method.
-  resolveHostPath?: (
-    absPath: string,
-  ) => Promise<{ source: string; subPath: string } | null>;
-  // WHY: doctor surface exists from signalk-container 1.4+; mirror only the fields we read.
-  doctor?: {
-    selfDeployment: () => Promise<{ isContainerized: boolean }>;
-  };
 }
 
 // WHY: returns false on any failure so we don't accidentally skip the permission fix on bare-metal SK when the doctor surface is missing or throws.
@@ -147,17 +127,8 @@ function signalkBaseFromEndpoint(
   };
 }
 
-interface RecreateInputs {
-  tag: string;
-  ports: Record<string, string>;
-  volumes: Record<string, string>;
-  env: Record<string, string>;
-  networkMode: string;
-}
-
-function computeConfigHash(inputs: RecreateInputs, dataDir: string): string {
-  // Hash every datasource YAML so a change to any of them (questdb or signalk)
-  // forces a recreate — Grafana reads provisioning only at boot.
+// Hash every datasource YAML so a change to any of them (questdb or signalk) forces a recreate — Grafana reads provisioning only at boot, and signalk-container's drift detection diffs the mount path, not file contents. Tag/env/volumes/ports drift is the manager's job now.
+function computeProvisioningHash(dataDir: string): string {
   const readDatasourceYaml = (name: string): string => {
     try {
       return readFileSync(
@@ -168,19 +139,11 @@ function computeConfigHash(inputs: RecreateInputs, dataDir: string): string {
       return "";
     }
   };
-  const provisioningHash = createHash("sha256")
+  return createHash("sha256")
     .update(readDatasourceYaml("questdb.yaml"))
     .update("\0")
     .update(readDatasourceYaml("signalk.yaml"))
     .digest("hex");
-  return JSON.stringify({
-    tag: inputs.tag,
-    ports: inputs.ports,
-    volumes: inputs.volumes,
-    env: inputs.env,
-    networkMode: inputs.networkMode,
-    provisioningHash,
-  });
 }
 
 // WHY probe through Grafana: the in-process endpoint probe can confirm a port the Grafana container cannot reach (reverse proxy, localhost bind); only the container-side view is truthful.
@@ -224,32 +187,32 @@ export default (app: App) => {
   let tokenPollerCancelled = false;
   // WHY: token-approval reprovisioning must reuse the startup endpoint.
   let sessionEndpoint: SignalkEndpoint | null = null;
+  // WHY instance state: applyToken and the update route go through the same ManagedContainer so every recreate is serialized against start/stop.
+  let container: ManagedContainer | null = null;
 
   async function asyncStart(config: Config) {
     currentConfig = config;
     tokenPollerCancelled = false;
     const dataDir = app.getDataDirPath();
 
-    let containers: ContainerManagerApi | undefined;
-    const deadline = Date.now() + 30000;
-    while (Date.now() < deadline) {
-      containers = (globalThis as any).__signalk_containerManager as
-        | ContainerManagerApi
-        | undefined;
-      if (containers && containers.getRuntime()) break;
-      app.setPluginStatus("Waiting for container runtime...");
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-    }
-
-    if (!containers || !containers.getRuntime()) {
+    app.setPluginStatus("Waiting for container runtime...");
+    const { manager: containers, runtime: detectedRuntime } =
+      await waitForContainerManager();
+    if (!containers) {
       app.setPluginError(
         "signalk-container plugin required. Install it and ensure a container runtime is available.",
       );
       return;
     }
+    if (!detectedRuntime) {
+      app.setPluginError(
+        "No container runtime detected (Podman or Docker). Install one and restart Signal K.",
+      );
+      return;
+    }
 
     app.setPluginStatus("Ensuring container network...");
-    await containers.ensureNetwork(config.networkName);
+    await containers.ensureNetwork?.(config.networkName);
 
     // Must run before Grafana starts: container opens grafana.db on boot.
     // Any later restore-into-place wouldn't be seen until the next recreate.
@@ -311,9 +274,8 @@ export default (app: App) => {
     // client talks to the host daemon over a Unix socket; `podman unshare` is not
     // supported by the remote client and writes a "cannot use command 'podman unshare'
     // with the remote podman client" line to stderr before failing.
-    const runtime = containers.getRuntime();
     const skContainerized = await isContainerizedSignalK(containers);
-    if (runtime && runtime.runtime === "podman" && !skContainerized) {
+    if (detectedRuntime.runtime === "podman" && !skContainerized) {
       try {
         const { execFileSync } = await import("child_process");
         // stdio 'ignore' silences any unshare-not-supported messages on stderr.
@@ -333,9 +295,8 @@ export default (app: App) => {
       config,
     );
 
-    // WHY YAML in the hash: a scheme/port/tlsSkipVerify change rewrites only the
-    // YAML (not env/ports), and Grafana reads provisioning solely at boot.
-    const configHash = computeConfigHash(containerConfig, dataDir);
+    // WHY the sidecar hash: a scheme/port/tlsSkipVerify change rewrites only the YAML, Grafana reads provisioning solely at boot, and drift detection cannot see file contents — so a YAML change must force the recreate here. Everything else (tag/env/volumes/ports) is the manager's drift detection.
+    const provisioningHash = computeProvisioningHash(dataDir);
     const hashFile = `${dataDir}.container-hash`;
     let lastHash = "";
     try {
@@ -343,39 +304,47 @@ export default (app: App) => {
     } catch {
       // first run
     }
-
-    const state = await containers.getState("signalk-grafana");
-    if (state !== "missing" && configHash !== lastHash) {
-      app.setPluginStatus("Recreating Grafana container (config changed)...");
-      await containers.remove("signalk-grafana");
+    if (
+      provisioningHash !== lastHash &&
+      (await containers.getState(CONTAINER_NAME)) !== "missing"
+    ) {
+      app.setPluginStatus(
+        "Recreating Grafana container (provisioning changed)...",
+      );
+      await containers.remove(CONTAINER_NAME);
     }
 
-    app.setPluginStatus("Starting Grafana container...");
-    await containers.ensureRunning("signalk-grafana", containerConfig);
+    container = new ManagedContainer({
+      app,
+      pluginId: PLUGIN_ID,
+      name: CONTAINER_NAME,
+      image: "grafana/grafana",
+      defaultTag: "latest",
+      buildConfig: (tag) => ({ ...containerConfig, tag }),
+      readiness: { port: 3000, path: "/api/health", maxMs: 90_000 },
+      updates: {
+        versionSource: { githubReleases: "grafana/grafana" },
+        currentTag: () => currentConfig?.grafanaVersion ?? "latest",
+      },
+    });
 
-    writeFileSync(hashFile, configHash);
+    let healthy = true;
+    try {
+      await container.start(config.grafanaVersion ?? "latest");
+    } catch (err) {
+      // WHY soft-fail on not-ready: the container is up but Grafana is slow (first boot on a Pi) — keep the old behavior of continuing with a warning instead of failing the whole start.
+      if (err instanceof ContainerHelperError && err.code === "not-ready") {
+        healthy = false;
+      } else {
+        throw err;
+      }
+    }
+    writeFileSync(hashFile, provisioningHash);
 
     const grafanaUrl = `http://127.0.0.1:${config.grafanaPort}`;
-    const healthDeadline = Date.now() + 30000;
-    let healthy = false;
-    while (Date.now() < healthDeadline) {
-      try {
-        const res = await fetch(`${grafanaUrl}/api/health`, {
-          signal: AbortSignal.timeout(2000),
-        });
-        if (res.ok) {
-          healthy = true;
-          break;
-        }
-      } catch {
-        // not ready yet
-      }
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }
 
-    // Always set the admin password after startup to ensure it matches config
     try {
-      await containers.execInContainer("signalk-grafana", [
+      await containers.execInContainer?.("signalk-grafana", [
         "grafana",
         "cli",
         "admin",
@@ -405,7 +374,7 @@ export default (app: App) => {
     // runtime config object) still kicks off the flow.
     const wantsToken = config.requestSignalkToken !== false;
     if (wantsToken && initialToken === undefined) {
-      void ensureSignalkToken(containers, dataDir, config).catch((err) => {
+      void ensureSignalkToken(dataDir, config).catch((err) => {
         app.debug(
           `Signal K token flow failed: ${err instanceof Error ? err.message : String(err)}`,
         );
@@ -414,7 +383,6 @@ export default (app: App) => {
   }
 
   async function ensureSignalkToken(
-    containers: ContainerManagerApi,
     dataDir: string,
     config: Config,
   ): Promise<void> {
@@ -440,7 +408,7 @@ export default (app: App) => {
       case "cached":
         // Race: token landed between the initial readCachedToken and
         // the POST. Re-provision + recreate so the container picks it up.
-        await applyToken(containers, dataDir, config, begin.token);
+        await applyToken(dataDir, config, begin.token);
         return;
       case "no-security":
         app.debug(
@@ -494,7 +462,7 @@ export default (app: App) => {
       "Signal K token approved — recreating Grafana container...",
     );
     try {
-      await applyToken(containers, dataDir, config, token);
+      await applyToken(dataDir, config, token);
       app.setPluginStatus(`Grafana running at port ${config.grafanaPort}`);
     } catch (err) {
       app.setPluginError(
@@ -504,14 +472,8 @@ export default (app: App) => {
     }
   }
 
-  // Re-provision the datasource YAML with `token` and force a container
-  // recreate. Grafana only reads provisioning at startup, and
-  // signalk-container's drift detection diffs the bind-mount path (which
-  // didn't change), not the file contents — so a plain ensureRunning
-  // would not pick the new YAML up. Explicit remove + ensureRunning is
-  // the only way to get the secret into the running grafana instance.
+  // WHY applyUpdate on the current tag: Grafana reads provisioning only at boot and drift detection diffs mount paths, not file contents — a serialized remove + ensureRunning (no registry pull) is the only way new YAML reaches the container without racing start/stop.
   async function applyToken(
-    containers: ContainerManagerApi,
     dataDir: string,
     config: Config,
     token: string,
@@ -522,18 +484,12 @@ export default (app: App) => {
       sessionEndpoint ??
       (config.signalkUrl ? resolveSignalkEndpoint(config) : undefined);
     generateProvisioning(dataDir, config, token, endpoint);
-    await containers.remove(CONTAINER_NAME);
-    const containerConfig = await buildContainerConfig(
-      containers,
-      dataDir,
-      config,
-    );
-    await containers.ensureRunning(CONTAINER_NAME, containerConfig);
-    // Keep the recreate hash in step with the just-written YAML so the next
-    // asyncStart doesn't see a stale hash and recreate a second time.
+    if (!container) throw new Error("Grafana container is not managed yet");
+    await container.applyUpdate(config.grafanaVersion ?? "latest");
+    // WHY hash rewrite: the next asyncStart must not see a stale hash and recreate a second time.
     writeFileSync(
       `${dataDir}.container-hash`,
-      computeConfigHash(containerConfig, dataDir),
+      computeProvisioningHash(dataDir),
     );
   }
 
@@ -545,7 +501,7 @@ export default (app: App) => {
     containers: ContainerManagerApi,
     dataDir: string,
     config: Config,
-  ) {
+  ): Promise<ContainerConfig> {
     const bind = config.bindToAllInterfaces ? "0.0.0.0" : "127.0.0.1";
     const mounts = await resolveGrafanaMounts(containers, dataDir);
     return {
@@ -584,29 +540,15 @@ export default (app: App) => {
     schema: ConfigSchema,
 
     start(config: Config) {
-      asyncStart(config).catch((err) => {
-        app.setPluginError(
-          `Startup failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      });
+      startSafely(app, () => asyncStart(config));
     },
 
     async stop() {
-      // Break any in-flight token-approval poller before tearing down so
-      // it doesn't outlive the plugin and write a stale token after stop().
+      // WHY: an in-flight token poller must not outlive the plugin and write a stale token after stop().
       tokenPollerCancelled = true;
-      if (currentConfig) {
-        const containers = (globalThis as any).__signalk_containerManager as
-          | ContainerManagerApi
-          | undefined;
-        if (containers) {
-          try {
-            await containers.stop("signalk-grafana");
-          } catch {
-            // may already be stopped
-          }
-        }
-      }
+      // Serialized against any in-flight start/recreate; stops (never removes) the container and unregisters update detection. Never throws.
+      await container?.stop();
+      container = null;
       currentConfig = null;
       sessionEndpoint = null;
     },
@@ -754,13 +696,6 @@ export default (app: App) => {
 
       router.post("/api/update/apply", async (_req, res) => {
         try {
-          const containers = (globalThis as any).__signalk_containerManager as
-            | ContainerManagerApi
-            | undefined;
-          if (!containers || !containers.getRuntime()) {
-            res.status(503).json({ error: "Container manager not available" });
-            return;
-          }
           // WHY snapshot: narrowing must survive the awaits below; null means the plugin is stopped — refuse rather than create a container from fabricated defaults.
           const config = currentConfig;
           if (!config) {
@@ -791,48 +726,19 @@ export default (app: App) => {
           }
           const newTag = stable.tag_name.replace(/^v/, "");
 
-          app.setPluginStatus(`Pulling Grafana ${newTag}...`);
-          await containers.pullImage(`grafana/grafana:${newTag}`);
-
-          // WHY recheck: stop() or a restart during the fetch+pull awaits must not let this stale request resurrect or reconfigure the container; a changed identity means a newer lifecycle owner took over.
-          if (currentConfig !== config) {
-            res.status(409).json({
-              error:
-                "Plugin stopped or restarted during the update — apply again.",
-            });
+          // WHY snapshot: applyUpdate serializes against start/stop, but this handler's persist below must not run for a lifecycle owner that has moved on.
+          const managed = container;
+          if (!managed) {
+            res.status(503).json({ error: "Plugin not running" });
             return;
           }
+          app.setPluginStatus(`Updating to Grafana ${newTag}...`);
+          // Serialized recreate; ensureRunning pulls the new tag when it is not local.
+          await managed.applyUpdate(newTag);
 
-          app.setPluginStatus("Replacing container...");
-          await containers.remove("signalk-grafana");
-
-          app.setPluginStatus(`Starting Grafana ${newTag}...`);
-          const dataDir = app.getDataDirPath();
-          const containerConfig = await buildContainerConfig(
-            containers,
-            dataDir,
-            { ...config, grafanaVersion: newTag },
-          );
-          // WHY second check: a stop() or restart landing during remove+resolve must not be undone by this stale ensureRunning.
           if (currentConfig !== config) {
-            res.status(409).json({
-              error:
-                "Plugin stopped or restarted during the update — apply again.",
-            });
-            return;
-          }
-          await containers.ensureRunning(CONTAINER_NAME, containerConfig);
-
-          // WHY third check: a restart racing the ensureRunning await owns the hash file and saved options now — don't clobber them with this request's state.
-          if (currentConfig !== config) {
-            // WHY stop on null: our ensureRunning may have resurrected a container that stop() already stopped; after a restart the new owner keeps it.
-            if (currentConfig === null) {
-              try {
-                await containers.stop(CONTAINER_NAME);
-              } catch {
-                // already stopped or gone
-              }
-            }
+            // A stop() or restart queued behind the update owns the lifecycle now; its state must not be clobbered, and a stopped plugin must not keep the recreated container running.
+            if (currentConfig === null) await managed.stop();
             res.status(409).json({
               error:
                 "Plugin stopped or restarted during the update — apply again.",
@@ -841,11 +747,6 @@ export default (app: App) => {
           }
 
           config.grafanaVersion = newTag;
-          // Keep the recreate hash in step so the next start doesn't recreate a second time.
-          writeFileSync(
-            `${dataDir}.container-hash`,
-            computeConfigHash(containerConfig, dataDir),
-          );
           // WHY persist: asyncStart rebuilds from saved options, so an unsaved tag reverts the update on the next plugin restart.
           const persistErr = await new Promise<string | null>((resolve) => {
             if (typeof app.savePluginOptions !== "function") {
@@ -914,7 +815,7 @@ export default (app: App) => {
           const containers = (globalThis as any).__signalk_containerManager as
             | ContainerManagerApi
             | undefined;
-          if (!containers || !containers.getRuntime()) {
+          if (!containers?.getRuntime() || !containers.execInContainer) {
             res.status(503).json({ error: "Container manager not available" });
             return;
           }
