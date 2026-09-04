@@ -46,7 +46,7 @@
     "signalk-container-helper": "^0.11.0"
   },
   "devDependencies": {
-    "@babel/core": "^7.29.0",
+    "@babel/core": "^8.0.1",
     "@babel/preset-react": "^7.28.5",
     "@eslint/js": "^10.0.1",
     "@signalk/server-api": "latest",
